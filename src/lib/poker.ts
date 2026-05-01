@@ -51,6 +51,13 @@ export type MonteCarloResult = {
   elapsedMs: number;
 };
 
+export type MonteCarloAccumulator = {
+  wins: number;
+  losses: number;
+  ties: number;
+  handBreakdownCounts: number[];
+};
+
 function parseCard(cardId: string): ParsedCard {
   const suit = cardId.slice(-1);
   const rankText = cardId.slice(0, -1);
@@ -259,24 +266,29 @@ function drawRandomCards(deck: string[], count: number) {
   return workingDeck.slice(0, count);
 }
 
-export function runMonteCarloSimulation(options: {
+export function createMonteCarloAccumulator(): MonteCarloAccumulator {
+  return {
+    wins: 0,
+    losses: 0,
+    ties: 0,
+    handBreakdownCounts: new Array(HAND_LABELS.length).fill(0),
+  };
+}
+
+export function runMonteCarloBatch(options: {
   heroHoleCards: string[];
   boardCards: string[];
   opponents: number;
   simulations: number;
+  accumulator: MonteCarloAccumulator;
 }) {
-  const { heroHoleCards, boardCards, opponents, simulations } = options;
+  const { heroHoleCards, boardCards, opponents, simulations, accumulator } = options;
   const usedCards = new Set([...heroHoleCards, ...boardCards]);
   const availableDeck = Object.keys(RANK_VALUES)
     .flatMap((rank) => ["S", "H", "D", "C"].map((suit) => `${rank}${suit}`))
     .filter((cardId) => !usedCards.has(cardId));
   const boardCardsNeeded = 5 - boardCards.length;
   const cardsNeededPerTrial = boardCardsNeeded + opponents * 2;
-  const handBreakdownCounts = new Array(HAND_LABELS.length).fill(0);
-  let wins = 0;
-  let losses = 0;
-  let ties = 0;
-  const startedAt = performance.now();
 
   for (let trial = 0; trial < simulations; trial += 1) {
     const draw = drawRandomCards(availableDeck, cardsNeededPerTrial);
@@ -285,7 +297,7 @@ export function runMonteCarloSimulation(options: {
     const heroHandIndex = HAND_LABELS.findIndex(
       (label) => label === heroScore.label,
     );
-    handBreakdownCounts[heroHandIndex] += 1;
+    accumulator.handBreakdownCounts[heroHandIndex] += 1;
 
     let comparison = 1;
 
@@ -309,25 +321,31 @@ export function runMonteCarloSimulation(options: {
     }
 
     if (comparison > 0) {
-      wins += 1;
+      accumulator.wins += 1;
     } else if (comparison < 0) {
-      losses += 1;
+      accumulator.losses += 1;
     } else {
-      ties += 1;
+      accumulator.ties += 1;
     }
   }
+}
 
-  const completedAt = performance.now();
-
+export function finalizeMonteCarloResult(options: {
+  accumulator: MonteCarloAccumulator;
+  simulations: number;
+  opponents: number;
+  elapsedMs: number;
+}) {
+  const { accumulator, simulations, opponents, elapsedMs } = options;
   return {
-    win: Number(((wins / simulations) * 100).toFixed(1)),
-    lose: Number(((losses / simulations) * 100).toFixed(1)),
-    tie: Number(((ties / simulations) * 100).toFixed(1)),
-    handBreakdown: handBreakdownCounts.map((count) =>
+    win: Number(((accumulator.wins / simulations) * 100).toFixed(1)),
+    lose: Number(((accumulator.losses / simulations) * 100).toFixed(1)),
+    tie: Number(((accumulator.ties / simulations) * 100).toFixed(1)),
+    handBreakdown: accumulator.handBreakdownCounts.map((count) =>
       Number(((count / simulations) * 100).toFixed(1)),
     ),
     simulations,
     opponents,
-    elapsedMs: Math.round(completedAt - startedAt),
+    elapsedMs,
   } satisfies MonteCarloResult;
 }

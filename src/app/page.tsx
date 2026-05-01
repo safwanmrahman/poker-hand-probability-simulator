@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import {
   ArrowRight,
@@ -21,8 +21,11 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import {
+  createMonteCarloAccumulator,
+  finalizeMonteCarloResult,
   HAND_LABELS,
-  runMonteCarloSimulation,
+  runMonteCarloBatch,
+  type MonteCarloAccumulator,
   type MonteCarloResult,
 } from "@/lib/poker";
 
@@ -88,6 +91,7 @@ type PersistedState = {
 };
 
 const STORAGE_KEY = "poker-simulator-ui-state";
+const SIMULATION_BATCH_SIZE = 2500;
 
 function formatPercent(value: number) {
   return `${value.toFixed(1)}%`;
@@ -191,6 +195,9 @@ export default function Home() {
     persistedState?.simulationResult ?? null,
   );
   const [isRunningSimulation, setIsRunningSimulation] = useState(false);
+  const [simulationProgress, setSimulationProgress] = useState(0);
+  const [completedSimulations, setCompletedSimulations] = useState(0);
+  const simulationRunIdRef = useRef(0);
 
   useEffect(() => {
     const persistedState: PersistedState = {
@@ -233,7 +240,7 @@ export default function Home() {
     parsedSimulationCount >= 1000 &&
     parsedSimulationCount <= 500000;
   const isOpponentCountValid = opponentCount >= 1 && opponentCount <= 9;
-  const canRunPlaceholder =
+  const canRunSimulation =
     holeCardsSelected === 2 &&
     !hasBoardGap &&
     isSimulationCountValid &&
@@ -265,7 +272,7 @@ export default function Home() {
           ? "Choose between 1 and 9 opponents."
         : !isSimulationCountValid
           ? "Enter a simulation count between 1,000 and 500,000."
-          : "Selections look valid. You can run a placeholder simulation now.";
+          : "Selections look valid. You can run the simulation now.";
   const resultSummary =
     simulationResult ?? {
       win: 0,
@@ -437,27 +444,79 @@ export default function Home() {
   }
 
   function runPlaceholderSimulation() {
-    if (!canRunPlaceholder || isRunningSimulation) {
+    if (!canRunSimulation || isRunningSimulation) {
       return;
     }
 
+    const runId = simulationRunIdRef.current + 1;
+    simulationRunIdRef.current = runId;
     setIsRunningSimulation(true);
+    setSimulationProgress(0);
+    setCompletedSimulations(0);
+    setSimulationResult(null);
 
-    window.setTimeout(() => {
-      const result = runMonteCarloSimulation({
-        heroHoleCards: selectedHoleCards.filter(
-          (cardId): cardId is string => cardId !== null,
-        ),
-        boardCards: selectedBoardCards.filter(
-          (cardId): cardId is string => cardId !== null,
-        ),
-        simulations: parsedSimulationCount,
-        opponents: opponentCount,
-      });
+    const heroHoleCards = selectedHoleCards.filter(
+      (cardId): cardId is string => cardId !== null,
+    );
+    const boardCards = selectedBoardCards.filter(
+      (cardId): cardId is string => cardId !== null,
+    );
+    const startedAt = performance.now();
+    const accumulator: MonteCarloAccumulator = createMonteCarloAccumulator();
 
-      setSimulationResult(result);
-      setIsRunningSimulation(false);
-    }, 0);
+    const runNextBatch = (completedTrials: number) => {
+      if (simulationRunIdRef.current !== runId) {
+        return;
+      }
+
+      const remainingTrials = parsedSimulationCount - completedTrials;
+      const batchSize = Math.min(SIMULATION_BATCH_SIZE, remainingTrials);
+
+      if (batchSize <= 0) {
+        const result = finalizeMonteCarloResult({
+          accumulator,
+          simulations: parsedSimulationCount,
+          opponents: opponentCount,
+          elapsedMs: Math.round(performance.now() - startedAt),
+        });
+
+        setSimulationResult(result);
+        setSimulationProgress(100);
+        setCompletedSimulations(parsedSimulationCount);
+        setIsRunningSimulation(false);
+        return;
+      }
+
+      window.setTimeout(() => {
+        runMonteCarloBatch({
+          heroHoleCards,
+          boardCards,
+          simulations: batchSize,
+          opponents: opponentCount,
+          accumulator,
+        });
+
+        const nextCompletedTrials = completedTrials + batchSize;
+
+        if (simulationRunIdRef.current !== runId) {
+          return;
+        }
+
+        setCompletedSimulations(nextCompletedTrials);
+        setSimulationProgress(
+          Math.round((nextCompletedTrials / parsedSimulationCount) * 100),
+        );
+
+        runNextBatch(nextCompletedTrials);
+      }, 0);
+    };
+
+    runNextBatch(0);
+  }
+
+  function cancelSimulation() {
+    simulationRunIdRef.current += 1;
+    setIsRunningSimulation(false);
   }
 
   return (
@@ -484,11 +543,21 @@ export default function Home() {
                     size="lg"
                     className="bg-white text-secondary hover:bg-white/92"
                     onClick={runPlaceholderSimulation}
-                    disabled={!canRunPlaceholder || isRunningSimulation}
+                    disabled={!canRunSimulation || isRunningSimulation}
                   >
                     {isRunningSimulation ? "Running Simulation..." : "Run Simulation"}
                     <ArrowRight className="ml-2 size-4" />
                   </Button>
+                  {isRunningSimulation ? (
+                    <Button
+                      variant="outline"
+                      size="lg"
+                      className="border-white/20 bg-white/10 text-white hover:bg-white/16"
+                      onClick={cancelSimulation}
+                    >
+                      Cancel Run
+                    </Button>
+                  ) : null}
                   <Button
                     variant="outline"
                     size="lg"
@@ -531,11 +600,17 @@ export default function Home() {
                 </div>
                 <p className="mt-3 text-sm leading-6 text-white/72">
                   {isRunningSimulation
-                    ? "Monte Carlo simulation is running for the current setup."
+                    ? `Monte Carlo simulation is running: ${completedSimulations.toLocaleString()} of ${parsedSimulationCount.toLocaleString()} trials complete.`
                     : simulationResult
                       ? `Simulation complete for ${simulationResult.simulations.toLocaleString()} trials against ${simulationResult.opponents} opponent${simulationResult.opponents === 1 ? "" : "s"} in ${simulationResult.elapsedMs} ms.`
                       : "Run a simulation to generate real win, lose, tie, and hand-distribution results."}
                 </p>
+                <div className="mt-3 h-2.5 rounded-full bg-white/10">
+                  <div
+                    className="h-full rounded-full bg-[linear-gradient(90deg,#d97706,#f6c36b)] transition-[width] duration-200"
+                    style={{ width: `${simulationProgress}%` }}
+                  />
+                </div>
               </div>
             </div>
           </CardContent>
@@ -882,7 +957,7 @@ export default function Home() {
                     size="lg"
                     className="w-full sm:w-auto"
                     onClick={runPlaceholderSimulation}
-                    disabled={!canRunPlaceholder || isRunningSimulation}
+                    disabled={!canRunSimulation || isRunningSimulation}
                   >
                     {isRunningSimulation ? "Simulating..." : "Simulate Hands"}
                   </Button>
@@ -952,7 +1027,17 @@ export default function Home() {
               <div className="rounded-2xl bg-muted/45 p-4 text-sm">
                 <p className="font-medium">Run Readiness</p>
                 <p className="mt-1 text-muted-foreground">
-                  {canRunPlaceholder ? "Ready to simulate" : "Needs input"}
+                  {canRunSimulation ? "Ready to simulate" : "Needs input"}
+                </p>
+              </div>
+              <div className="rounded-2xl bg-muted/45 p-4 text-sm">
+                <p className="font-medium">Progress</p>
+                <p className="mt-1 text-muted-foreground">
+                  {isRunningSimulation
+                    ? `${simulationProgress}% complete`
+                    : simulationResult
+                      ? "Last run finished"
+                      : "No run yet"}
                 </p>
               </div>
               <div className="rounded-2xl border border-border bg-[#fffdf8] p-4 text-sm leading-6 text-muted-foreground">
@@ -961,7 +1046,8 @@ export default function Home() {
               </div>
               <div className="rounded-2xl bg-muted/45 p-4 text-sm leading-6 text-muted-foreground">
                 Results now come from an in-browser Monte Carlo simulation using your
-                current cards, board state, and opponent count.
+                current cards, board state, and opponent count. Runs are chunked to
+                keep the UI responsive during larger trials.
               </div>
             </CardContent>
           </Card>
@@ -987,7 +1073,11 @@ export default function Home() {
                   <p className="text-sm text-muted-foreground">{stat.label}</p>
                   <p className="mt-2 text-3xl font-semibold">{stat.value}</p>
                   <p className="mt-2 text-sm text-muted-foreground">
-                    {simulationResult ? "Latest simulation" : "Awaiting run"}
+                    {isRunningSimulation
+                      ? "Updating live"
+                      : simulationResult
+                        ? "Latest simulation"
+                        : "Awaiting run"}
                   </p>
                 </div>
               ))}
