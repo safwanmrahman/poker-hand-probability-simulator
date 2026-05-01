@@ -40,25 +40,78 @@ const DECK = RANKS.flatMap((rank) =>
   })),
 );
 
-const outcomeStats = [
-  { label: "Win", value: "47.8%", tone: "bg-primary" },
-  { label: "Lose", value: "44.1%", tone: "bg-secondary" },
-  { label: "Tie", value: "8.1%", tone: "bg-accent" },
-];
-
-const handBreakdown = [
-  ["High Card", 18],
-  ["Pair", 41],
-  ["Two Pair", 21],
-  ["Trips", 7],
-  ["Straight", 5],
-  ["Flush", 4],
-  ["Full House", 2],
-  ["Quads", 1],
-  ["Straight Flush", 0.6],
-  ["Royal Flush", 0.1],
-] as const;
 const BOARD_STREETS = ["Flop 1", "Flop 2", "Flop 3", "Turn", "River"] as const;
+const SIMULATION_PRESETS = [5000, 25000, 100000] as const;
+const HAND_LABELS = [
+  "High Card",
+  "Pair",
+  "Two Pair",
+  "Trips",
+  "Straight",
+  "Flush",
+  "Full House",
+  "Quads",
+  "Straight Flush",
+  "Royal Flush",
+] as const;
+
+type SimulationSnapshot = {
+  win: number;
+  lose: number;
+  tie: number;
+  handBreakdown: number[];
+  simulations: number;
+};
+
+function formatPercent(value: number) {
+  return `${value.toFixed(1)}%`;
+}
+
+function generatePlaceholderResults(
+  holeCards: (string | null)[],
+  boardCards: (string | null)[],
+  simulationCount: number,
+): SimulationSnapshot {
+  const seedSource = [...holeCards, ...boardCards].filter(Boolean).join("-");
+  let seed = simulationCount;
+
+  for (const char of seedSource) {
+    seed += char.charCodeAt(0) * 17;
+  }
+
+  const win = 32 + (seed % 29);
+  const tie = 2 + (Math.floor(seed / 7) % 10);
+  const lose = 100 - win - tie;
+
+  const rawBreakdown = HAND_LABELS.map((_, index) => {
+    if (index === HAND_LABELS.length - 1) {
+      return (seed % 3) + 1;
+    }
+
+    return ((seed + index * 19) % 100) + 12;
+  });
+
+  const rawTotal = rawBreakdown.reduce((sum, value) => sum + value, 0);
+  const handBreakdown = rawBreakdown.map((value, index) => {
+    if (index === rawBreakdown.length - 1) {
+      const runningTotal = rawBreakdown
+        .slice(0, -1)
+        .reduce((sum, item) => sum + (item / rawTotal) * 100, 0);
+
+      return Number(Math.max(0.1, 100 - runningTotal).toFixed(1));
+    }
+
+    return Number(((value / rawTotal) * 100).toFixed(1));
+  });
+
+  return {
+    win,
+    lose,
+    tie,
+    handBreakdown,
+    simulations: simulationCount,
+  };
+}
 
 function PlayingCard({
   value,
@@ -99,12 +152,57 @@ export default function Home() {
   const [activeHoleSlot, setActiveHoleSlot] = useState(0);
   const [activeBoardSlot, setActiveBoardSlot] = useState(0);
   const [activePicker, setActivePicker] = useState<"hole" | "board">("hole");
+  const [simulationInput, setSimulationInput] = useState("25000");
+  const [simulationResult, setSimulationResult] = useState<SimulationSnapshot | null>(
+    null,
+  );
 
   const nextEmptySlot = selectedHoleCards.findIndex((card) => card === null);
   const nextEmptyBoardSlot = selectedBoardCards.findIndex((card) => card === null);
   const usedCards = new Set(
     [...selectedHoleCards, ...selectedBoardCards].filter(Boolean),
   );
+  const holeCardsSelected = selectedHoleCards.filter(Boolean).length;
+  const boardCardsSelected = selectedBoardCards.filter(Boolean).length;
+  const remainingDeckCount = DECK.length - usedCards.size;
+  const hasBoardGap = selectedBoardCards.some(
+    (card, index) => card === null && selectedBoardCards.slice(index + 1).some(Boolean),
+  );
+  const parsedSimulationCount = Number.parseInt(simulationInput, 10);
+  const isSimulationCountValid =
+    Number.isFinite(parsedSimulationCount) &&
+    parsedSimulationCount >= 1000 &&
+    parsedSimulationCount <= 500000;
+  const canRunPlaceholder =
+    holeCardsSelected === 2 && !hasBoardGap && isSimulationCountValid;
+  const activeTargetLabel =
+    activePicker === "hole"
+      ? `Hole card slot ${activeHoleSlot + 1}`
+      : BOARD_STREETS[activeBoardSlot];
+  const statusMessage =
+    holeCardsSelected < 2
+      ? "Choose both hole cards to unlock placeholder simulation runs."
+      : hasBoardGap
+        ? "Fill community cards from left to right so the board state stays valid."
+        : !isSimulationCountValid
+          ? "Enter a simulation count between 1,000 and 500,000."
+          : "Selections look valid. You can run a placeholder simulation now.";
+  const resultSummary =
+    simulationResult ??
+    generatePlaceholderResults(
+      selectedHoleCards,
+      selectedBoardCards,
+      isSimulationCountValid ? parsedSimulationCount : 25000,
+    );
+  const outcomeStats = [
+    { label: "Win", value: formatPercent(resultSummary.win), tone: "bg-primary" },
+    { label: "Lose", value: formatPercent(resultSummary.lose), tone: "bg-secondary" },
+    { label: "Tie", value: formatPercent(resultSummary.tie), tone: "bg-accent" },
+  ];
+  const handBreakdown = HAND_LABELS.map((label, index) => [
+    label,
+    resultSummary.handBreakdown[index],
+  ] as const);
 
   function handleHoleCardSelect(cardId: string) {
     const shouldAdvanceSlot =
@@ -200,6 +298,20 @@ export default function Home() {
     setActivePicker("board");
   }
 
+  function runPlaceholderSimulation() {
+    if (!canRunPlaceholder) {
+      return;
+    }
+
+    setSimulationResult(
+      generatePlaceholderResults(
+        selectedHoleCards,
+        selectedBoardCards,
+        parsedSimulationCount,
+      ),
+    );
+  }
+
   return (
     <main className="mx-auto flex min-h-screen w-full max-w-7xl flex-col gap-8 px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
       <section className="grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
@@ -215,14 +327,16 @@ export default function Home() {
                     Build, test, and visualize poker odds from any board state.
                   </h1>
                   <p className="max-w-2xl text-base leading-7 text-white/76 sm:text-lg">
-                    Hole-card selection is live now, with the board, simulation
-                    controls, and probability analysis ready for the next steps.
+                    Card selection, simulation controls, and a placeholder
+                    results flow are all wired together for the next build step.
                   </p>
                 </div>
                 <div className="flex flex-col gap-3 sm:flex-row">
                   <Button
                     size="lg"
                     className="bg-white text-secondary hover:bg-white/92"
+                    onClick={runPlaceholderSimulation}
+                    disabled={!canRunPlaceholder}
                   >
                     Run Placeholder Trial
                     <ArrowRight className="ml-2 size-4" />
@@ -231,6 +345,7 @@ export default function Home() {
                     variant="outline"
                     size="lg"
                     className="border-white/20 bg-white/10 text-white hover:bg-white/16"
+                    onClick={() => setActivePicker("board")}
                   >
                     Configure Board
                   </Button>
@@ -258,6 +373,11 @@ export default function Home() {
                     <p className="mt-1 text-2xl font-semibold">25,000</p>
                   </div>
                 </div>
+                <p className="mt-3 text-sm leading-6 text-white/72">
+                  {simulationResult
+                    ? `Placeholder run complete for ${simulationResult.simulations.toLocaleString()} trials.`
+                    : "Run the placeholder engine to push current selections into the results panels below."}
+                </p>
               </div>
             </div>
           </CardContent>
@@ -274,6 +394,16 @@ export default function Home() {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-5">
+            <div className="rounded-2xl border border-border bg-[#fffdf8] px-4 py-3">
+              <p className="text-sm font-medium">Selection Status</p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                {holeCardsSelected}/2 hole cards, {boardCardsSelected}/5 board cards,{" "}
+                {remainingDeckCount} cards remaining in deck.
+              </p>
+              <p className="mt-2 text-sm leading-6 text-muted-foreground">
+                {statusMessage}
+              </p>
+            </div>
             <div className="space-y-3">
               <div className="flex items-center justify-between">
                 <p className="text-sm font-medium">Hole Cards</p>
@@ -353,11 +483,20 @@ export default function Home() {
             <CardHeader>
               <CardTitle>Card Selector</CardTitle>
               <CardDescription>
-                Start by choosing two hole cards. Selected cards are disabled in
-                the deck.
+                The shared deck now feeds hole cards, board cards, and the
+                placeholder simulation state.
               </CardDescription>
             </CardHeader>
             <CardContent className="grid gap-4">
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border bg-muted/20 px-4 py-3 text-sm">
+                <p className="font-medium">
+                  Active picker: <span className="text-primary">{activeTargetLabel}</span>
+                </p>
+                <p className="text-muted-foreground">
+                  Selected cards are removed from the available deck.
+                </p>
+              </div>
+
               <div className="flex flex-col gap-3 rounded-2xl border border-border bg-[#fffdf8] p-4 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <p className="text-sm font-medium">Hole card picker</p>
@@ -500,10 +639,22 @@ export default function Home() {
             <CardHeader>
               <CardTitle>Simulation Controls</CardTitle>
               <CardDescription>
-                Inputs are scaffolded for trial count and action flow.
+                Controls are live now, with validation and quick presets.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
+              <div className="flex flex-wrap gap-2">
+                {SIMULATION_PRESETS.map((preset) => (
+                  <Button
+                    key={preset}
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setSimulationInput(String(preset))}
+                  >
+                    {preset.toLocaleString()}
+                  </Button>
+                ))}
+              </div>
               <div className="grid gap-4 sm:grid-cols-[1fr_auto]">
                 <div className="space-y-2">
                   <label
@@ -515,19 +666,53 @@ export default function Home() {
                   <Input
                     id="simulations"
                     type="number"
-                    defaultValue="25000"
+                    value={simulationInput}
+                    onChange={(event) => setSimulationInput(event.target.value)}
                     placeholder="25000"
                   />
                 </div>
                 <div className="flex items-end">
-                  <Button size="lg" className="w-full sm:w-auto">
+                  <Button
+                    size="lg"
+                    className="w-full sm:w-auto"
+                    onClick={runPlaceholderSimulation}
+                    disabled={!canRunPlaceholder}
+                  >
                     Simulate Hands
                   </Button>
                 </div>
               </div>
+              <div className="grid gap-3 sm:grid-cols-3">
+                <div className="rounded-2xl bg-muted/45 p-4 text-sm">
+                  <p className="font-medium">Trials</p>
+                  <p className="mt-1 text-muted-foreground">
+                    {isSimulationCountValid
+                      ? parsedSimulationCount.toLocaleString()
+                      : "Invalid count"}
+                  </p>
+                </div>
+                <div className="rounded-2xl bg-muted/45 p-4 text-sm">
+                  <p className="font-medium">Board Street</p>
+                  <p className="mt-1 text-muted-foreground">
+                    {boardCardsSelected === 0
+                      ? "Preflop"
+                      : boardCardsSelected <= 3
+                        ? "Flop"
+                        : boardCardsSelected === 4
+                          ? "Turn"
+                          : "River"}
+                  </p>
+                </div>
+                <div className="rounded-2xl bg-muted/45 p-4 text-sm">
+                  <p className="font-medium">Run Readiness</p>
+                  <p className="mt-1 text-muted-foreground">
+                    {canRunPlaceholder ? "Ready" : "Needs input"}
+                  </p>
+                </div>
+              </div>
               <div className="rounded-2xl bg-muted/45 p-4 text-sm leading-6 text-muted-foreground">
-                Monte Carlo engine and validation logic will plug into this
-                control panel next.
+                Placeholder simulation mode is active. Real Monte Carlo logic
+                will replace these generated values in a later commit.
               </div>
             </CardContent>
           </Card>
@@ -541,7 +726,7 @@ export default function Home() {
                 Results Overview
               </CardTitle>
               <CardDescription>
-                Win, lose, and tie metrics are framed as ready-to-bind stats.
+                Results now react to the current setup or the latest placeholder run.
               </CardDescription>
             </CardHeader>
             <CardContent className="grid gap-4 sm:grid-cols-3">
@@ -553,7 +738,7 @@ export default function Home() {
                   <p className="text-sm text-muted-foreground">{stat.label}</p>
                   <p className="mt-2 text-3xl font-semibold">{stat.value}</p>
                   <p className="mt-2 text-sm text-muted-foreground">
-                    Placeholder probability
+                    {simulationResult ? "Latest placeholder run" : "Live preview"}
                   </p>
                 </div>
               ))}
@@ -568,7 +753,7 @@ export default function Home() {
                   Hand Type Breakdown
                 </CardTitle>
                 <CardDescription>
-                  Final made-hand distribution placeholder.
+                  Placeholder final-hand distribution based on current state.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
@@ -604,22 +789,29 @@ export default function Home() {
                 <div className="rounded-2xl border border-dashed border-border bg-[linear-gradient(180deg,rgba(15,118,110,0.05),rgba(15,118,110,0.18))] p-4">
                   <p className="text-sm font-medium">Outcome donut chart</p>
                   <div className="mt-6 flex aspect-square items-center justify-center rounded-full border-12 border-primary/18 border-t-primary bg-white/50">
-                    <span className="text-sm text-muted-foreground">
-                      Chart placeholder
-                    </span>
+                    <div className="text-center">
+                      <p className="text-3xl font-semibold">{formatPercent(resultSummary.win)}</p>
+                      <p className="mt-1 text-sm text-muted-foreground">Win rate</p>
+                    </div>
                   </div>
                 </div>
                 <div className="rounded-2xl border border-dashed border-border bg-[linear-gradient(180deg,rgba(217,119,6,0.04),rgba(217,119,6,0.14))] p-4">
                   <p className="text-sm font-medium">Street-by-street trend</p>
                   <div className="mt-6 flex h-48 items-end gap-3 rounded-2xl bg-white/55 p-4">
-                    {[42, 56, 50, 73, 66].map((height, index) => (
+                    {[
+                      Math.max(18, Math.round(resultSummary.tie * 4)),
+                      Math.max(24, Math.round(resultSummary.lose)),
+                      Math.max(30, Math.round(resultSummary.win)),
+                      Math.max(36, Math.round(resultSummary.win + resultSummary.tie / 2)),
+                      Math.max(42, Math.round(resultSummary.win + boardCardsSelected * 4)),
+                    ].map((height, index) => (
                       <div key={height} className="flex-1 space-y-2">
                         <div
                           className="rounded-t-xl bg-secondary/82"
                           style={{ height: `${height}%` }}
                         />
                         <p className="text-center text-xs text-muted-foreground">
-                          {index + 1}
+                          {["P", "F", "F", "T", "R"][index]}
                         </p>
                       </div>
                     ))}
