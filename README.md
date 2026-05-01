@@ -19,7 +19,8 @@ Implemented so far:
 - Poker hand evaluation for final 7-card hands
 - Live win, lose, and tie probabilities
 - Final hand-type probability breakdown
-- Non-blocking simulation runs with progress updates and cancel support
+- Worker-backed simulation runs with progress updates and cancel support
+- Recent run history stored locally
 - Results overview cards and charts driven by simulation output
 - Random full-table dealing
 - Street helpers for dealing flop, turn, and river
@@ -90,9 +91,11 @@ poker-hand-probability-simulator/
 │   │       ├── button.tsx
 │   │       ├── card.tsx
 │   │       └── input.tsx
-│   └── lib/
-│       ├── poker.ts
-│       └── utils.ts
+│   ├── lib/
+│   │   ├── poker.ts
+│   │   └── utils.ts
+│   └── workers/
+│       └── simulation.worker.ts
 ├── components.json
 ├── eslint.config.mjs
 ├── LICENSE
@@ -133,11 +136,7 @@ poker-hand-probability-simulator/
 - Run a real Monte Carlo simulation in the browser
 - See progress updates during long runs
 - Cancel an in-progress run
+- Keep the UI responsive with a background simulation worker
+- Review recent simulation history
 - View simulated win, lose, and tie percentages
 - View simulated final hand distribution and result summaries
-
-## Notes
-
-- The simulator is being built incrementally with small and medium-sized commits.
-- The current simulation runs entirely on the client.
-- A good next step would be improving charting, adding richer analytics, or moving heavy simulation work off the main thread.

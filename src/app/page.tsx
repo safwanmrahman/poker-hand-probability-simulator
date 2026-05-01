@@ -5,9 +5,13 @@ import { useEffect, useRef, useState } from "react";
 import {
   ArrowRight,
   BarChart3,
+  CheckCircle2,
   ChartColumnIncreasing,
   ChevronDown,
   Dices,
+  History,
+  LoaderCircle,
+  ShieldCheck,
   TrendingUp,
 } from "lucide-react";
 
@@ -21,11 +25,7 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import {
-  createMonteCarloAccumulator,
-  finalizeMonteCarloResult,
   HAND_LABELS,
-  runMonteCarloBatch,
-  type MonteCarloAccumulator,
   type MonteCarloResult,
 } from "@/lib/poker";
 
@@ -79,6 +79,14 @@ const SCENARIO_PRESETS = [
     activeBoardSlot: 3,
   },
 ] as const;
+
+type RunHistoryEntry = {
+  id: string;
+  createdAt: string;
+  summary: string;
+  result: MonteCarloResult;
+};
+
 type PersistedState = {
   selectedHoleCards: (string | null)[];
   selectedBoardCards: (string | null)[];
@@ -88,10 +96,10 @@ type PersistedState = {
   opponentCount: number;
   simulationInput: string;
   simulationResult: MonteCarloResult | null;
+  runHistory: RunHistoryEntry[];
 };
 
 const STORAGE_KEY = "poker-simulator-ui-state";
-const SIMULATION_BATCH_SIZE = 2500;
 
 function formatPercent(value: number) {
   return `${value.toFixed(1)}%`;
@@ -129,6 +137,19 @@ function loadPersistedState(): PersistedState | null {
     window.localStorage.removeItem(STORAGE_KEY);
     return null;
   }
+}
+
+function formatCards(cardIds: (string | null)[]) {
+  return cardIds.filter(Boolean).join(" ") || "No cards selected";
+}
+
+function getTopHandLabels(handBreakdown: number[]) {
+  return HAND_LABELS.map((label, index) => ({
+    label,
+    value: handBreakdown[index] ?? 0,
+  }))
+    .sort((left, right) => right.value - left.value)
+    .slice(0, 3);
 }
 
 function PlayingCard({
@@ -194,10 +215,14 @@ export default function Home() {
   const [simulationResult, setSimulationResult] = useState<MonteCarloResult | null>(
     persistedState?.simulationResult ?? null,
   );
+  const [runHistory, setRunHistory] = useState<RunHistoryEntry[]>(
+    persistedState?.runHistory ?? [],
+  );
   const [isRunningSimulation, setIsRunningSimulation] = useState(false);
   const [simulationProgress, setSimulationProgress] = useState(0);
   const [completedSimulations, setCompletedSimulations] = useState(0);
-  const simulationRunIdRef = useRef(0);
+  const [simulationError, setSimulationError] = useState<string | null>(null);
+  const simulationWorkerRef = useRef<Worker | null>(null);
 
   useEffect(() => {
     const persistedState: PersistedState = {
@@ -209,6 +234,7 @@ export default function Home() {
       opponentCount,
       simulationInput,
       simulationResult,
+      runHistory,
     };
 
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(persistedState));
@@ -221,6 +247,7 @@ export default function Home() {
     selectedHoleCards,
     simulationInput,
     simulationResult,
+    runHistory,
   ]);
 
   const nextEmptySlot = selectedHoleCards.findIndex((card) => card === null);
@@ -258,8 +285,8 @@ export default function Home() {
           ? "Turn"
           : "River";
   const scenarioSummary = [
-    selectedHoleCards.filter(Boolean).join(" ") || "No hole cards",
-    selectedBoardCards.filter(Boolean).join(" ") || "No board cards",
+    formatCards(selectedHoleCards),
+    formatCards(selectedBoardCards),
     `vs ${opponentCount} opponent${opponentCount === 1 ? "" : "s"}`,
     boardStage,
   ].join(" • ");
@@ -272,7 +299,9 @@ export default function Home() {
           ? "Choose between 1 and 9 opponents."
         : !isSimulationCountValid
           ? "Enter a simulation count between 1,000 and 500,000."
-          : "Selections look valid. You can run the simulation now.";
+          : simulationError
+            ? simulationError
+            : "Selections look valid. You can run the simulation now.";
   const resultSummary =
     simulationResult ?? {
       win: 0,
@@ -292,6 +321,20 @@ export default function Home() {
     label,
     resultSummary.handBreakdown[index],
   ] as const);
+  const topHandLabels = getTopHandLabels(resultSummary.handBreakdown);
+  const bestOutcome =
+    outcomeStats.slice().sort((left, right) => {
+      const leftValue = Number.parseFloat(left.value);
+      const rightValue = Number.parseFloat(right.value);
+      return rightValue - leftValue;
+    })[0];
+
+  useEffect(() => {
+    return () => {
+      simulationWorkerRef.current?.terminate();
+      simulationWorkerRef.current = null;
+    };
+  }, []);
 
   function setScenarioPreset(preset: (typeof SCENARIO_PRESETS)[number]) {
     setSelectedHoleCards([...preset.holeCards]);
@@ -300,6 +343,7 @@ export default function Home() {
     setActiveBoardSlot(preset.activeBoardSlot);
     setActivePicker(preset.activePicker);
     setSimulationResult(null);
+    setSimulationError(null);
   }
 
   function handleHoleCardSelect(cardId: string) {
@@ -348,6 +392,7 @@ export default function Home() {
     setActiveHoleSlot(0);
     setActivePicker("hole");
     setSimulationResult(null);
+    setSimulationError(null);
   }
 
   function handleBoardCardSelect(cardId: string) {
@@ -396,6 +441,7 @@ export default function Home() {
     setActiveBoardSlot(0);
     setActivePicker("board");
     setSimulationResult(null);
+    setSimulationError(null);
   }
 
   function resetTable() {
@@ -407,6 +453,7 @@ export default function Home() {
     setOpponentCount(1);
     setSimulationInput("25000");
     setSimulationResult(null);
+    setSimulationError(null);
   }
 
   function dealRandomSetup() {
@@ -418,6 +465,7 @@ export default function Home() {
     setActiveBoardSlot(4);
     setActivePicker("board");
     setSimulationResult(null);
+    setSimulationError(null);
   }
 
   function dealBoardThrough(targetCount: number) {
@@ -441,6 +489,7 @@ export default function Home() {
     setActiveBoardSlot(clampIndex(targetCount - 1, 4));
     setActivePicker("board");
     setSimulationResult(null);
+    setSimulationError(null);
   }
 
   function runPlaceholderSimulation() {
@@ -448,12 +497,12 @@ export default function Home() {
       return;
     }
 
-    const runId = simulationRunIdRef.current + 1;
-    simulationRunIdRef.current = runId;
+    simulationWorkerRef.current?.terminate();
     setIsRunningSimulation(true);
     setSimulationProgress(0);
     setCompletedSimulations(0);
     setSimulationResult(null);
+    setSimulationError(null);
 
     const heroHoleCards = selectedHoleCards.filter(
       (cardId): cardId is string => cardId !== null,
@@ -461,62 +510,94 @@ export default function Home() {
     const boardCards = selectedBoardCards.filter(
       (cardId): cardId is string => cardId !== null,
     );
-    const startedAt = performance.now();
-    const accumulator: MonteCarloAccumulator = createMonteCarloAccumulator();
+    const summary = [
+      formatCards(selectedHoleCards),
+      formatCards(selectedBoardCards),
+      `vs ${opponentCount} opponent${opponentCount === 1 ? "" : "s"}`,
+      `${parsedSimulationCount.toLocaleString()} trials`,
+    ].join(" • ");
 
-    const runNextBatch = (completedTrials: number) => {
-      if (simulationRunIdRef.current !== runId) {
+    const worker = new Worker(
+      new URL("../workers/simulation.worker.ts", import.meta.url),
+      { type: "module" },
+    );
+
+    simulationWorkerRef.current = worker;
+
+    worker.onmessage = (
+      event: MessageEvent<
+        | {
+            type: "progress";
+            completedSimulations: number;
+            totalSimulations: number;
+            progress: number;
+          }
+        | {
+            type: "done";
+            result: MonteCarloResult;
+          }
+        | {
+            type: "error";
+            message: string;
+          }
+      >,
+    ) => {
+      if (event.data.type === "progress") {
+        setCompletedSimulations(event.data.completedSimulations);
+        setSimulationProgress(event.data.progress);
         return;
       }
 
-      const remainingTrials = parsedSimulationCount - completedTrials;
-      const batchSize = Math.min(SIMULATION_BATCH_SIZE, remainingTrials);
+      if (event.data.type === "done") {
+        const completedResult = event.data.result;
 
-      if (batchSize <= 0) {
-        const result = finalizeMonteCarloResult({
-          accumulator,
-          simulations: parsedSimulationCount,
-          opponents: opponentCount,
-          elapsedMs: Math.round(performance.now() - startedAt),
-        });
-
-        setSimulationResult(result);
-        setSimulationProgress(100);
-        setCompletedSimulations(parsedSimulationCount);
-        setIsRunningSimulation(false);
-        return;
-      }
-
-      window.setTimeout(() => {
-        runMonteCarloBatch({
-          heroHoleCards,
-          boardCards,
-          simulations: batchSize,
-          opponents: opponentCount,
-          accumulator,
-        });
-
-        const nextCompletedTrials = completedTrials + batchSize;
-
-        if (simulationRunIdRef.current !== runId) {
-          return;
-        }
-
-        setCompletedSimulations(nextCompletedTrials);
-        setSimulationProgress(
-          Math.round((nextCompletedTrials / parsedSimulationCount) * 100),
+        setSimulationResult(completedResult);
+        setRunHistory((currentHistory) =>
+          [
+            {
+              id: crypto.randomUUID(),
+              createdAt: new Date().toISOString(),
+              summary,
+              result: completedResult,
+            },
+            ...currentHistory,
+          ].slice(0, 6),
         );
+        setSimulationProgress(100);
+        setCompletedSimulations(completedResult.simulations);
+        setIsRunningSimulation(false);
+        worker.terminate();
+        simulationWorkerRef.current = null;
+        return;
+      }
 
-        runNextBatch(nextCompletedTrials);
-      }, 0);
+      setSimulationError(event.data.message);
+      setIsRunningSimulation(false);
+      worker.terminate();
+      simulationWorkerRef.current = null;
     };
 
-    runNextBatch(0);
+    worker.onerror = () => {
+      setSimulationError("Simulation worker crashed. Try running the simulation again.");
+      setIsRunningSimulation(false);
+      worker.terminate();
+      simulationWorkerRef.current = null;
+    };
+
+    worker.postMessage({
+      type: "run",
+      heroHoleCards,
+      boardCards,
+      simulations: parsedSimulationCount,
+      opponents: opponentCount,
+    });
   }
 
   function cancelSimulation() {
-    simulationRunIdRef.current += 1;
+    simulationWorkerRef.current?.terminate();
+    simulationWorkerRef.current = null;
     setIsRunningSimulation(false);
+    setSimulationError("Simulation cancelled.");
   }
 
   return (
@@ -611,6 +692,14 @@ export default function Home() {
                     style={{ width: `${simulationProgress}%` }}
                   />
                 </div>
+                <div className="mt-3 flex flex-wrap gap-2 text-xs text-white/70">
+                  <span className="rounded-full border border-white/10 bg-white/8 px-3 py-1">
+                    {isRunningSimulation ? "Worker running" : "Worker idle"}
+                  </span>
+                  <span className="rounded-full border border-white/10 bg-white/8 px-3 py-1">
+                    Best outcome: {bestOutcome.label} {bestOutcome.value}
+                  </span>
+                </div>
               </div>
             </div>
           </CardContent>
@@ -633,15 +722,20 @@ export default function Home() {
                 {holeCardsSelected}/2 hole cards, {boardCardsSelected}/5 board cards,{" "}
                 {remainingDeckCount} cards remaining in deck.
               </p>
-              <p className="mt-2 text-sm leading-6 text-muted-foreground">
-                {statusMessage}
-              </p>
-              <p className="mt-2 text-sm leading-6 text-muted-foreground">
-                {scenarioSummary}
-              </p>
-              <div className="mt-3 flex flex-wrap gap-2">
-                <Button variant="outline" size="sm" onClick={dealRandomSetup}>
-                  Random setup
+                <p className="mt-2 text-sm leading-6 text-muted-foreground">
+                  {statusMessage}
+                </p>
+                <p className="mt-2 text-sm leading-6 text-muted-foreground">
+                  {scenarioSummary}
+                </p>
+                {simulationError ? (
+                  <p className="mt-2 text-sm leading-6 text-red-700">
+                    {simulationError}
+                  </p>
+                ) : null}
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <Button variant="outline" size="sm" onClick={dealRandomSetup}>
+                    Random setup
                 </Button>
                 <Button variant="outline" size="sm" onClick={resetTable}>
                   Reset table
@@ -1045,9 +1139,9 @@ export default function Home() {
                 latest simulation snapshot.
               </div>
               <div className="rounded-2xl bg-muted/45 p-4 text-sm leading-6 text-muted-foreground">
-                Results now come from an in-browser Monte Carlo simulation using your
-                current cards, board state, and opponent count. Runs are chunked to
-                keep the UI responsive during larger trials.
+                Results now come from a background worker simulation using your current
+                cards, board state, and opponent count, so the UI stays responsive
+                during larger runs.
               </div>
             </CardContent>
           </Card>
@@ -1074,7 +1168,7 @@ export default function Home() {
                   <p className="mt-2 text-3xl font-semibold">{stat.value}</p>
                   <p className="mt-2 text-sm text-muted-foreground">
                     {isRunningSimulation
-                      ? "Updating live"
+                      ? "Worker updating"
                       : simulationResult
                         ? "Latest simulation"
                         : "Awaiting run"}
@@ -1110,6 +1204,93 @@ export default function Home() {
             </CardContent>
           </Card>
 
+          <Card className="bg-white/78">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <ShieldCheck className="size-5 text-primary" />
+                Result Details
+              </CardTitle>
+              <CardDescription>
+                Quick insight into the strongest current outcome and simulation speed.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="grid gap-4 sm:grid-cols-3">
+              <div className="rounded-2xl border border-border bg-[#fffdf8] p-5">
+                <p className="text-sm text-muted-foreground">Best Outcome</p>
+                <p className="mt-2 text-lg font-semibold">{bestOutcome.label}</p>
+                <p className="mt-2 text-sm text-muted-foreground">{bestOutcome.value}</p>
+              </div>
+              <div className="rounded-2xl border border-border bg-[#fffdf8] p-5">
+                <p className="text-sm text-muted-foreground">Top Made Hand</p>
+                <p className="mt-2 text-lg font-semibold">{topHandLabels[0]?.label ?? "N/A"}</p>
+                <p className="mt-2 text-sm text-muted-foreground">
+                  {topHandLabels[0] ? formatPercent(topHandLabels[0].value) : "0.0%"}
+                </p>
+              </div>
+              <div className="rounded-2xl border border-border bg-[#fffdf8] p-5">
+                <p className="text-sm text-muted-foreground">Run Speed</p>
+                <p className="mt-2 text-lg font-semibold">
+                  {simulationResult ? `${simulationResult.elapsedMs} ms` : "Not run yet"}
+                </p>
+                <p className="mt-2 text-sm text-muted-foreground">
+                  {simulationResult
+                    ? `${Math.round(simulationResult.simulations / Math.max(simulationResult.elapsedMs, 1))} trials/ms`
+                    : "Waiting for first simulation"}
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="bg-white/78">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <History className="size-5 text-accent" />
+                Recent Runs
+              </CardTitle>
+              <CardDescription>
+                Your last few simulations stay available in local state for quick reference.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {runHistory.length === 0 ? (
+                <div className="rounded-2xl border border-dashed border-border bg-muted/20 p-4 text-sm text-muted-foreground">
+                  No completed runs yet.
+                </div>
+              ) : (
+                runHistory.map((entry) => (
+                  <div
+                    key={entry.id}
+                    className="rounded-2xl border border-border bg-[#fffdf8] p-4"
+                  >
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="space-y-1">
+                        <p className="text-sm font-medium">{entry.summary}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {new Date(entry.createdAt).toLocaleString()}
+                        </p>
+                      </div>
+                      <div className="inline-flex items-center gap-1 rounded-full bg-primary/8 px-2.5 py-1 text-xs font-medium text-primary">
+                        <CheckCircle2 className="size-3.5" />
+                        {formatPercent(entry.result.win)} win
+                      </div>
+                    </div>
+                    <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                      <div className="rounded-xl bg-muted/30 px-3 py-2 text-sm">
+                        Win {formatPercent(entry.result.win)}
+                      </div>
+                      <div className="rounded-xl bg-muted/30 px-3 py-2 text-sm">
+                        Tie {formatPercent(entry.result.tie)}
+                      </div>
+                      <div className="rounded-xl bg-muted/30 px-3 py-2 text-sm">
+                        {entry.result.elapsedMs} ms
+                      </div>
+                    </div>
+                  </div>
+                ))
+              )}
+            </CardContent>
+          </Card>
+
           <div className="grid gap-6 lg:grid-cols-[0.9fr_1.1fr]">
             <Card className="bg-white/78">
               <CardHeader>
@@ -1136,6 +1317,20 @@ export default function Home() {
                     </div>
                   </div>
                 ))}
+                <div className="rounded-2xl bg-muted/30 p-4">
+                  <p className="text-sm font-medium">Most Frequent Results</p>
+                  <div className="mt-3 grid gap-2">
+                    {topHandLabels.map((entry) => (
+                      <div
+                        key={entry.label}
+                        className="flex items-center justify-between rounded-xl bg-[#fffdf8] px-3 py-2 text-sm"
+                      >
+                        <span>{entry.label}</span>
+                        <span className="font-medium">{formatPercent(entry.value)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
               </CardContent>
             </Card>
 
@@ -1154,7 +1349,16 @@ export default function Home() {
                   <p className="text-sm font-medium">Outcome donut chart</p>
                   <div className="mt-6 flex aspect-square items-center justify-center rounded-full border-12 border-primary/18 border-t-primary bg-white/50">
                     <div className="text-center">
-                      <p className="text-3xl font-semibold">{formatPercent(resultSummary.win)}</p>
+                      <p className="text-3xl font-semibold">
+                        {isRunningSimulation ? (
+                          <span className="inline-flex items-center gap-2">
+                            <LoaderCircle className="size-5 animate-spin" />
+                            {simulationProgress}%
+                          </span>
+                        ) : (
+                          formatPercent(resultSummary.win)
+                        )}
+                      </p>
                       <p className="mt-1 text-sm text-muted-foreground">Win rate</p>
                     </div>
                   </div>
