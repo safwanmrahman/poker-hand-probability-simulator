@@ -7,12 +7,17 @@ import {
   BarChart3,
   CheckCircle2,
   ChartColumnIncreasing,
-  ChevronDown,
   Dices,
   History,
   LoaderCircle,
+  MoonStar,
+  Play,
+  RotateCcw,
   ShieldCheck,
+  Sparkles,
+  SunMedium,
   TrendingUp,
+  WandSparkles,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -24,16 +29,14 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import {
-  HAND_LABELS,
-  type MonteCarloResult,
-} from "@/lib/poker";
+import { HAND_LABELS, type MonteCarloResult } from "@/lib/poker";
+import { cn } from "@/lib/utils";
 
 const RANKS = ["A", "K", "Q", "J", "10", "9", "8", "7", "6", "5", "4", "3", "2"];
 const SUITS = [
   { code: "S", symbol: "♠", tone: "text-foreground" },
-  { code: "H", symbol: "♥", tone: "text-red-600" },
-  { code: "D", symbol: "♦", tone: "text-red-600" },
+  { code: "H", symbol: "♥", tone: "text-red-600 dark:text-rose-300" },
+  { code: "D", symbol: "♦", tone: "text-red-600 dark:text-rose-300" },
   { code: "C", symbol: "♣", tone: "text-foreground" },
 ] as const;
 
@@ -63,6 +66,7 @@ const SCENARIO_PRESETS = [
     boardCards: [null, null, null, null, null],
     activePicker: "board" as const,
     activeBoardSlot: 0,
+    opponentCount: 3,
   },
   {
     label: "Big Slick Draw",
@@ -70,6 +74,7 @@ const SCENARIO_PRESETS = [
     boardCards: ["QS", "JD", "2S", null, null],
     activePicker: "board" as const,
     activeBoardSlot: 3,
+    opponentCount: 2,
   },
   {
     label: "Set on Flop",
@@ -77,8 +82,11 @@ const SCENARIO_PRESETS = [
     boardCards: ["9H", "KS", "2D", null, null],
     activePicker: "board" as const,
     activeBoardSlot: 3,
+    opponentCount: 4,
   },
 ] as const;
+
+type ThemeMode = "light" | "dark";
 
 type RunHistoryEntry = {
   id: string;
@@ -99,7 +107,24 @@ type PersistedState = {
   runHistory: RunHistoryEntry[];
 };
 
+type SimulationWorkerMessage =
+  | {
+      type: "progress";
+      completedSimulations: number;
+      totalSimulations: number;
+      progress: number;
+    }
+  | {
+      type: "done";
+      result: MonteCarloResult;
+    }
+  | {
+      type: "error";
+      message: string;
+    };
+
 const STORAGE_KEY = "poker-simulator-ui-state";
+const THEME_STORAGE_KEY = "poker-simulator-theme";
 
 function formatPercent(value: number) {
   return `${value.toFixed(1)}%`;
@@ -139,6 +164,16 @@ function loadPersistedState(): PersistedState | null {
   }
 }
 
+function loadThemeMode(): ThemeMode {
+  if (typeof window === "undefined") {
+    return "light";
+  }
+
+  const savedTheme = window.localStorage.getItem(THEME_STORAGE_KEY);
+
+  return savedTheme === "dark" ? "dark" : "light";
+}
+
 function formatCards(cardIds: (string | null)[]) {
   return cardIds.filter(Boolean).join(" ") || "No cards selected";
 }
@@ -152,72 +187,120 @@ function getTopHandLabels(handBreakdown: number[]) {
     .slice(0, 3);
 }
 
+function getCardDetails(cardId: string | null) {
+  return DECK.find((card) => card.id === cardId) ?? null;
+}
+
 function PlayingCard({
   value,
-  highlighted = false,
+  caption,
   accent,
+  active = false,
+  filled = false,
+  isDarkMode = false,
 }: {
   value: string;
-  highlighted?: boolean;
+  caption: string;
   accent?: string;
+  active?: boolean;
+  filled?: boolean;
+  isDarkMode?: boolean;
 }) {
   return (
     <div
       className={[
-        "flex h-24 w-17 flex-col justify-between rounded-2xl border p-3 shadow-sm transition-transform sm:h-28 sm:w-20",
-        highlighted
-          ? "border-primary/25 bg-white text-secondary"
-          : "border-border bg-[#fffdf8] text-foreground/75",
+        "flex h-24 w-[4.6rem] flex-col justify-between rounded-2xl border p-3 text-left shadow-sm transition-all sm:h-28 sm:w-[5rem]",
+        filled
+          ? isDarkMode
+            ? "bg-slate-900/90 text-slate-100 shadow-none"
+            : "bg-[linear-gradient(180deg,#fffdfa,#f6efe4)] text-slate-900 shadow-[0_16px_30px_-22px_rgba(29,22,16,0.35)]"
+          : isDarkMode
+            ? "bg-slate-900/70 text-slate-300"
+            : "bg-stone-100 text-slate-700",
+        active
+          ? "border-primary shadow-[0_12px_30px_-18px_rgba(15,118,110,0.65)] ring-2 ring-primary/20"
+          : "border-border",
       ].join(" ")}
     >
-      <span className={`text-sm font-semibold tracking-[0.2em] ${accent ?? ""}`}>
+      <span
+        className={cn(
+          "text-base font-semibold tracking-[0.18em]",
+          !accent && isDarkMode ? "text-slate-100" : "",
+          accent ?? "",
+        )}
+      >
         {value}
       </span>
-      <span className="self-end text-xs uppercase text-muted-foreground">
-        card
+      <span
+        className={cn(
+          "text-[10px] uppercase tracking-[0.22em]",
+          isDarkMode ? "text-muted-foreground" : "text-stone-500",
+        )}
+      >
+        {caption}
       </span>
     </div>
   );
 }
 
+function StatCard({
+  label,
+  value,
+  detail,
+  tone,
+  isDarkMode,
+}: {
+  label: string;
+  value: string;
+  detail: string;
+  tone: string;
+  isDarkMode: boolean;
+}) {
+  return (
+    <div
+      className={cn(
+        "rounded-2xl border p-4",
+        isDarkMode
+          ? "border-white/10 bg-slate-950/60 shadow-none"
+          : "border-stone-200 bg-white shadow-[0_16px_40px_-28px_rgba(29,20,12,0.18)]",
+      )}
+    >
+      <div className={`mb-3 h-2 rounded-full ${tone}`} />
+      <p className={cn("text-sm", isDarkMode ? "text-muted-foreground" : "text-stone-700")}>
+        {label}
+      </p>
+      <p
+        className={cn(
+          "mt-2 text-3xl font-semibold",
+          isDarkMode ? "text-foreground" : "text-slate-950",
+        )}
+      >
+        {value}
+      </p>
+      <p className={cn("mt-2 text-sm", isDarkMode ? "text-muted-foreground" : "text-stone-600")}>
+        {detail}
+      </p>
+    </div>
+  );
+}
+
 export default function Home() {
-  const persistedState = loadPersistedState();
-  const [selectedHoleCards, setSelectedHoleCards] = useState<(string | null)[]>(
-    () => [
-      persistedState?.selectedHoleCards?.[0] ?? null,
-      persistedState?.selectedHoleCards?.[1] ?? null,
-    ],
-  );
+  const [hasHydrated, setHasHydrated] = useState(false);
+  const [themeMode, setThemeMode] = useState<ThemeMode>("light");
+  const [selectedHoleCards, setSelectedHoleCards] = useState<(string | null)[]>([
+    null,
+    null,
+  ]);
   const [selectedBoardCards, setSelectedBoardCards] = useState<(string | null)[]>(
-    () => [
-      persistedState?.selectedBoardCards?.[0] ?? null,
-      persistedState?.selectedBoardCards?.[1] ?? null,
-      persistedState?.selectedBoardCards?.[2] ?? null,
-      persistedState?.selectedBoardCards?.[3] ?? null,
-      persistedState?.selectedBoardCards?.[4] ?? null,
-    ],
+    [null, null, null, null, null],
   );
-  const [activeHoleSlot, setActiveHoleSlot] = useState(() =>
-    clampIndex(persistedState?.activeHoleSlot ?? 0, 1),
-  );
-  const [activeBoardSlot, setActiveBoardSlot] = useState(() =>
-    clampIndex(persistedState?.activeBoardSlot ?? 0, 4),
-  );
-  const [activePicker, setActivePicker] = useState<"hole" | "board">(
-    persistedState?.activePicker === "board" ? "board" : "hole",
-  );
-  const [opponentCount, setOpponentCount] = useState(
-    clampIndex(persistedState?.opponentCount ?? 1, 9) || 1,
-  );
-  const [simulationInput, setSimulationInput] = useState(
-    persistedState?.simulationInput ?? "25000",
-  );
-  const [simulationResult, setSimulationResult] = useState<MonteCarloResult | null>(
-    persistedState?.simulationResult ?? null,
-  );
-  const [runHistory, setRunHistory] = useState<RunHistoryEntry[]>(
-    persistedState?.runHistory ?? [],
-  );
+  const [activeHoleSlot, setActiveHoleSlot] = useState(0);
+  const [activeBoardSlot, setActiveBoardSlot] = useState(0);
+  const [activePicker, setActivePicker] = useState<"hole" | "board">("hole");
+  const [opponentCount, setOpponentCount] = useState(1);
+  const [simulationInput, setSimulationInput] = useState("25000");
+  const [simulationResult, setSimulationResult] = useState<MonteCarloResult | null>(null);
+  const [runHistory, setRunHistory] = useState<RunHistoryEntry[]>([]);
   const [isRunningSimulation, setIsRunningSimulation] = useState(false);
   const [simulationProgress, setSimulationProgress] = useState(0);
   const [completedSimulations, setCompletedSimulations] = useState(0);
@@ -225,7 +308,51 @@ export default function Home() {
   const simulationWorkerRef = useRef<Worker | null>(null);
 
   useEffect(() => {
-    const persistedState: PersistedState = {
+    const hydrationTimer = window.setTimeout(() => {
+      setThemeMode(loadThemeMode());
+
+      const persistedState = loadPersistedState();
+
+      if (persistedState) {
+        setSelectedHoleCards([
+          persistedState.selectedHoleCards?.[0] ?? null,
+          persistedState.selectedHoleCards?.[1] ?? null,
+        ]);
+        setSelectedBoardCards([
+          persistedState.selectedBoardCards?.[0] ?? null,
+          persistedState.selectedBoardCards?.[1] ?? null,
+          persistedState.selectedBoardCards?.[2] ?? null,
+          persistedState.selectedBoardCards?.[3] ?? null,
+          persistedState.selectedBoardCards?.[4] ?? null,
+        ]);
+        setActiveHoleSlot(clampIndex(persistedState.activeHoleSlot ?? 0, 1));
+        setActiveBoardSlot(clampIndex(persistedState.activeBoardSlot ?? 0, 4));
+        setActivePicker(
+          persistedState.activePicker === "board" ? "board" : "hole",
+        );
+        setOpponentCount(clampIndex(persistedState.opponentCount ?? 1, 9) || 1);
+        setSimulationInput(persistedState.simulationInput ?? "25000");
+        setSimulationResult(persistedState.simulationResult ?? null);
+        setRunHistory(persistedState.runHistory ?? []);
+      }
+
+      setHasHydrated(true);
+    }, 0);
+
+    return () => window.clearTimeout(hydrationTimer);
+  }, []);
+
+  useEffect(() => {
+    document.documentElement.classList.toggle("dark", themeMode === "dark");
+    window.localStorage.setItem(THEME_STORAGE_KEY, themeMode);
+  }, [themeMode]);
+
+  useEffect(() => {
+    if (!hasHydrated) {
+      return;
+    }
+
+    const nextState: PersistedState = {
       selectedHoleCards,
       selectedBoardCards,
       activeHoleSlot,
@@ -237,20 +364,28 @@ export default function Home() {
       runHistory,
     };
 
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(persistedState));
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(nextState));
   }, [
     activeBoardSlot,
     activeHoleSlot,
     activePicker,
     opponentCount,
+    runHistory,
     selectedBoardCards,
     selectedHoleCards,
     simulationInput,
     simulationResult,
-    runHistory,
+    hasHydrated,
   ]);
 
-  const nextEmptySlot = selectedHoleCards.findIndex((card) => card === null);
+  useEffect(() => {
+    return () => {
+      simulationWorkerRef.current?.terminate();
+      simulationWorkerRef.current = null;
+    };
+  }, []);
+
+  const nextEmptyHoleSlot = selectedHoleCards.findIndex((card) => card === null);
   const nextEmptyBoardSlot = selectedBoardCards.findIndex((card) => card === null);
   const usedCards = new Set(
     [...selectedHoleCards, ...selectedBoardCards].filter(Boolean),
@@ -272,10 +407,6 @@ export default function Home() {
     !hasBoardGap &&
     isSimulationCountValid &&
     isOpponentCountValid;
-  const activeTargetLabel =
-    activePicker === "hole"
-      ? `Hole card slot ${activeHoleSlot + 1}`
-      : BOARD_STREETS[activeBoardSlot];
   const boardStage =
     boardCardsSelected === 0
       ? "Preflop"
@@ -284,6 +415,10 @@ export default function Home() {
         : boardCardsSelected === 4
           ? "Turn"
           : "River";
+  const activeTargetLabel =
+    activePicker === "hole"
+      ? `Hole card slot ${activeHoleSlot + 1}`
+      : BOARD_STREETS[activeBoardSlot];
   const scenarioSummary = [
     formatCards(selectedHoleCards),
     formatCards(selectedBoardCards),
@@ -292,16 +427,16 @@ export default function Home() {
   ].join(" • ");
   const statusMessage =
     holeCardsSelected < 2
-      ? "Choose both hole cards to unlock placeholder simulation runs."
+      ? "Choose both hole cards to unlock simulation runs."
       : hasBoardGap
         ? "Fill community cards from left to right so the board state stays valid."
         : !isOpponentCountValid
           ? "Choose between 1 and 9 opponents."
-        : !isSimulationCountValid
-          ? "Enter a simulation count between 1,000 and 500,000."
-          : simulationError
-            ? simulationError
-            : "Selections look valid. You can run the simulation now.";
+          : !isSimulationCountValid
+            ? "Enter a simulation count between 1,000 and 500,000."
+            : simulationError
+              ? simulationError
+              : "Selections look valid. You can run the simulation now.";
   const resultSummary =
     simulationResult ?? {
       win: 0,
@@ -313,15 +448,49 @@ export default function Home() {
       elapsedMs: 0,
     };
   const outcomeStats = [
-    { label: "Win", value: formatPercent(resultSummary.win), tone: "bg-primary" },
-    { label: "Lose", value: formatPercent(resultSummary.lose), tone: "bg-secondary" },
-    { label: "Tie", value: formatPercent(resultSummary.tie), tone: "bg-accent" },
+    {
+      label: "Win",
+      value: formatPercent(resultSummary.win),
+      detail: isRunningSimulation ? "Updating in background" : "Hero wins all opponents",
+      tone: "bg-emerald-500",
+    },
+    {
+      label: "Lose",
+      value: formatPercent(resultSummary.lose),
+      detail: isRunningSimulation ? "Updating in background" : "Hero loses to any opponent",
+      tone: "bg-slate-800 dark:bg-slate-400",
+    },
+    {
+      label: "Tie",
+      value: formatPercent(resultSummary.tie),
+      detail: isRunningSimulation ? "Updating in background" : "Hero shares the pot",
+      tone: "bg-amber-500",
+    },
   ];
   const handBreakdown = HAND_LABELS.map((label, index) => [
     label,
     resultSummary.handBreakdown[index],
   ] as const);
   const topHandLabels = getTopHandLabels(resultSummary.handBreakdown);
+  const isDarkMode = themeMode === "dark";
+  const panelCardClass = isDarkMode
+    ? "border-white/10 bg-slate-950/55 shadow-none"
+    : "border-stone-200 bg-white shadow-[0_20px_60px_-36px_rgba(30,20,10,0.14)]";
+  const insetPanelClass = isDarkMode
+    ? "border-white/10 bg-slate-950/50"
+    : "border-stone-200 bg-stone-50";
+  const mutedPanelClass = isDarkMode
+    ? "border-white/10 bg-muted/20"
+    : "border-stone-200 bg-stone-50";
+  const outlineButtonClass = isDarkMode
+    ? "border-white/10 bg-slate-950/45 text-foreground hover:bg-slate-900"
+    : "border-stone-200 bg-white text-slate-900 hover:bg-stone-100 shadow-[0_10px_24px_-18px_rgba(29,20,12,0.14)]";
+  const heroRunButtonClass = isDarkMode
+    ? "border-white/10 bg-slate-950/60 text-foreground hover:bg-slate-950/70 disabled:border-white/10 disabled:bg-slate-950/60 disabled:text-foreground disabled:opacity-100"
+    : "border-white/16 bg-white text-secondary hover:bg-white/92 disabled:!border-white/20 disabled:!bg-white disabled:!text-slate-900 disabled:shadow-[0_12px_24px_-18px_rgba(15,23,42,0.35)] disabled:opacity-100";
+  const strongTextClass = isDarkMode ? "text-foreground" : "text-slate-950";
+  const mutedTextClass = isDarkMode ? "text-muted-foreground" : "text-stone-700";
+  const softTextClass = isDarkMode ? "text-muted-foreground" : "text-stone-600";
   const bestOutcome =
     outcomeStats.slice().sort((left, right) => {
       const leftValue = Number.parseFloat(left.value);
@@ -329,12 +498,9 @@ export default function Home() {
       return rightValue - leftValue;
     })[0];
 
-  useEffect(() => {
-    return () => {
-      simulationWorkerRef.current?.terminate();
-      simulationWorkerRef.current = null;
-    };
-  }, []);
+  function toggleThemeMode() {
+    setThemeMode((currentMode) => (currentMode === "light" ? "dark" : "light"));
+  }
 
   function setScenarioPreset(preset: (typeof SCENARIO_PRESETS)[number]) {
     setSelectedHoleCards([...preset.holeCards]);
@@ -342,13 +508,14 @@ export default function Home() {
     setActiveHoleSlot(0);
     setActiveBoardSlot(preset.activeBoardSlot);
     setActivePicker(preset.activePicker);
+    setOpponentCount(preset.opponentCount);
     setSimulationResult(null);
     setSimulationError(null);
   }
 
   function handleHoleCardSelect(cardId: string) {
     const shouldAdvanceSlot =
-      selectedHoleCards[activeHoleSlot] === null && nextEmptySlot !== -1;
+      selectedHoleCards[activeHoleSlot] === null && nextEmptyHoleSlot !== -1;
 
     setSelectedHoleCards((currentCards) => {
       if (currentCards.includes(cardId)) {
@@ -377,19 +544,6 @@ export default function Home() {
 
       return currentSlot;
     });
-  }
-
-  function clearHoleSlot(slotIndex: number) {
-    setSelectedHoleCards((currentCards) =>
-      currentCards.map((card, index) => (index === slotIndex ? null : card)),
-    );
-    setActiveHoleSlot(slotIndex);
-    setActivePicker("hole");
-  }
-
-  function clearAllHoleCards() {
-    setSelectedHoleCards([null, null]);
-    setActiveHoleSlot(0);
     setActivePicker("hole");
     setSimulationResult(null);
     setSimulationError(null);
@@ -426,6 +580,19 @@ export default function Home() {
 
       return currentSlot;
     });
+    setActivePicker("board");
+    setSimulationResult(null);
+    setSimulationError(null);
+  }
+
+  function clearHoleSlot(slotIndex: number) {
+    setSelectedHoleCards((currentCards) =>
+      currentCards.map((card, index) => (index === slotIndex ? null : card)),
+    );
+    setActiveHoleSlot(slotIndex);
+    setActivePicker("hole");
+    setSimulationResult(null);
+    setSimulationError(null);
   }
 
   function clearBoardSlot(slotIndex: number) {
@@ -434,6 +601,16 @@ export default function Home() {
     );
     setActiveBoardSlot(slotIndex);
     setActivePicker("board");
+    setSimulationResult(null);
+    setSimulationError(null);
+  }
+
+  function clearAllHoleCards() {
+    setSelectedHoleCards([null, null]);
+    setActiveHoleSlot(0);
+    setActivePicker("hole");
+    setSimulationResult(null);
+    setSimulationError(null);
   }
 
   function clearAllBoardCards() {
@@ -492,7 +669,7 @@ export default function Home() {
     setSimulationError(null);
   }
 
-  function runPlaceholderSimulation() {
+  function runSimulation() {
     if (!canRunSimulation || isRunningSimulation) {
       return;
     }
@@ -524,24 +701,7 @@ export default function Home() {
 
     simulationWorkerRef.current = worker;
 
-    worker.onmessage = (
-      event: MessageEvent<
-        | {
-            type: "progress";
-            completedSimulations: number;
-            totalSimulations: number;
-            progress: number;
-          }
-        | {
-            type: "done";
-            result: MonteCarloResult;
-          }
-        | {
-            type: "error";
-            message: string;
-          }
-      >,
-    ) => {
+    worker.onmessage = (event: MessageEvent<SimulationWorkerMessage>) => {
       if (event.data.type === "progress") {
         setCompletedSimulations(event.data.completedSimulations);
         setSimulationProgress(event.data.progress);
@@ -601,437 +761,242 @@ export default function Home() {
   }
 
   return (
-    <main className="mx-auto flex min-h-screen w-full max-w-7xl flex-col gap-8 px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
-      <section className="grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
-        <Card className="overflow-hidden border-none bg-[linear-gradient(135deg,rgba(15,118,110,0.94),rgba(22,48,43,0.96))] text-white">
-          <CardContent className="p-0">
-            <div className="grid gap-8 p-6 sm:p-8 lg:grid-cols-[1fr_auto] lg:items-end">
-              <div className="space-y-5">
-                <div className="inline-flex items-center rounded-full border border-white/15 bg-white/10 px-3 py-1 text-xs font-semibold tracking-[0.24em] uppercase">
-                  Texas Hold&apos;em Monte Carlo
-                </div>
-                <div className="space-y-3">
-                  <h1 className="max-w-2xl text-4xl font-semibold tracking-tight sm:text-5xl">
-                    Build, test, and visualize poker odds from any board state.
-                  </h1>
-                  <p className="max-w-2xl text-base leading-7 text-white/76 sm:text-lg">
-                    Card selection, simulation controls, and a placeholder
-                    results flow are all wired together for the next build step.
-                  </p>
-                </div>
-                <div className="flex flex-col gap-3 sm:flex-row">
-                  <Button
-                    size="lg"
-                    className="bg-white text-secondary hover:bg-white/92"
-                    onClick={runPlaceholderSimulation}
-                    disabled={!canRunSimulation || isRunningSimulation}
-                  >
-                    {isRunningSimulation ? "Running Simulation..." : "Run Simulation"}
-                    <ArrowRight className="ml-2 size-4" />
-                  </Button>
-                  {isRunningSimulation ? (
-                    <Button
-                      variant="outline"
-                      size="lg"
-                      className="border-white/20 bg-white/10 text-white hover:bg-white/16"
-                      onClick={cancelSimulation}
-                    >
-                      Cancel Run
-                    </Button>
-                  ) : null}
-                  <Button
-                    variant="outline"
-                    size="lg"
-                    className="border-white/20 bg-white/10 text-white hover:bg-white/16"
-                    onClick={dealRandomSetup}
-                  >
-                    Deal Random Table
-                  </Button>
-                </div>
+    <main className="mx-auto min-h-screen w-full max-w-[1500px] px-4 py-4 sm:px-6 lg:px-8 lg:py-6">
+      <div className="grid gap-6">
+        <header
+          className={cn(
+            "flex flex-col gap-4 rounded-[2rem] border p-5 sm:p-6",
+            isDarkMode
+              ? "border-white/10 bg-card/88 shadow-[0_20px_80px_-45px_rgba(0,0,0,0.5)]"
+              : "border-stone-200 bg-white shadow-[0_24px_80px_-44px_rgba(35,23,10,0.18)]",
+          )}
+        >
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+            <div className="space-y-3">
+              <div className="inline-flex items-center gap-2 rounded-full border border-border bg-muted/50 px-3 py-1 text-xs font-semibold uppercase tracking-[0.28em] text-muted-foreground">
+                <Sparkles className="size-3.5 text-primary" />
+                Texas Hold&apos;em Monte Carlo
               </div>
+              <div className="max-w-4xl space-y-3">
+                <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl lg:text-5xl">
+                  Simulate poker odds with a cleaner table builder and real-time results.
+                </h1>
+                <p className={cn("max-w-3xl text-base leading-7 sm:text-lg", mutedTextClass)}>
+                  Pick a hand, shape the board, choose opponents, and run a worker-backed
+                  Monte Carlo simulation without the UI getting in your way.
+                </p>
+              </div>
+            </div>
 
-              <div className="rounded-3xl border border-white/14 bg-black/14 p-4 backdrop-blur-sm">
-                <div className="grid grid-cols-2 gap-3">
-                  {outcomeStats.map((stat) => (
-                    <div
-                      key={stat.label}
-                      className="rounded-2xl bg-white/10 p-4 shadow-inner shadow-black/8"
-                    >
-                      <div
-                        className={`mb-3 h-2 rounded-full ${stat.tone}`}
-                      />
-                      <p className="text-sm text-white/70">{stat.label}</p>
-                      <p className="mt-1 text-2xl font-semibold">
-                        {stat.value}
-                      </p>
+            <div className="flex flex-wrap items-center gap-3">
+              <Button
+                variant="outline"
+                className={cn("gap-2", outlineButtonClass)}
+                onClick={toggleThemeMode}
+              >
+                {themeMode === "light" ? (
+                  <>
+                    <MoonStar className="size-4" />
+                    Dark mode
+                  </>
+                ) : (
+                  <>
+                    <SunMedium className="size-4" />
+                    Light mode
+                  </>
+                )}
+              </Button>
+              <Button
+                variant="outline"
+                className={cn("gap-2", outlineButtonClass)}
+                onClick={dealRandomSetup}
+              >
+                <WandSparkles className="size-4" />
+                Deal random table
+              </Button>
+              <Button
+                variant="outline"
+                className={cn("gap-2", outlineButtonClass)}
+                onClick={resetTable}
+              >
+                <RotateCcw className="size-4" />
+                Reset
+              </Button>
+            </div>
+          </div>
+
+          <div className="grid gap-3 lg:grid-cols-[1.2fr_0.8fr]">
+            <div className="rounded-[1.6rem] border border-border bg-[linear-gradient(135deg,rgba(15,118,110,0.96),rgba(22,48,43,0.94))] p-5 text-white shadow-[0_24px_70px_-32px_rgba(12,74,110,0.45)]">
+              <div className="flex flex-col gap-5">
+                <div className="flex flex-wrap items-center gap-2 text-xs">
+                  <span className="rounded-full border border-white/12 bg-white/10 px-3 py-1 uppercase tracking-[0.2em]">
+                    {boardStage}
+                  </span>
+                  <span className="rounded-full border border-white/12 bg-white/10 px-3 py-1">
+                    {parsedSimulationCount.toLocaleString()} trials
+                  </span>
+                  <span className="rounded-full border border-white/12 bg-white/10 px-3 py-1">
+                    {opponentCount} opponent{opponentCount === 1 ? "" : "s"}
+                  </span>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-[auto_1fr] sm:items-start">
+                  <div className="flex gap-3">
+                    {selectedHoleCards.map((cardId, index) => {
+                      const card = getCardDetails(cardId);
+                      return (
+                        <button
+                          key={`hero-card-${index}`}
+                          type="button"
+                          onClick={() => {
+                            setActiveHoleSlot(index);
+                            setActivePicker("hole");
+                          }}
+                          className="text-left"
+                        >
+                          <PlayingCard
+                            value={card ? `${card.rank}${card.symbol}` : "--"}
+                            caption={`Hole ${index + 1}`}
+                            accent={card?.tone}
+                            active={activePicker === "hole" && activeHoleSlot === index}
+                            filled={Boolean(card)}
+                            isDarkMode={isDarkMode}
+                          />
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div className="space-y-3">
+                    <p className="text-sm leading-6 text-white/82">{scenarioSummary}</p>
+                    <div className="flex flex-wrap gap-3">
+                      <Button
+                        variant="outline"
+                        size="lg"
+                        className={heroRunButtonClass}
+                        onClick={runSimulation}
+                        disabled={!canRunSimulation || isRunningSimulation}
+                      >
+                        {isRunningSimulation ? "Running simulation..." : "Run simulation"}
+                        <ArrowRight className="ml-2 size-4" />
+                      </Button>
+                      {isRunningSimulation ? (
+                        <Button
+                          variant="outline"
+                          size="lg"
+                          className="border-white/18 bg-white/10 text-white hover:bg-white/16"
+                          onClick={cancelSimulation}
+                        >
+                          Cancel run
+                        </Button>
+                      ) : null}
                     </div>
-                  ))}
-                  <div className="rounded-2xl bg-white/10 p-4">
-                    <p className="text-sm text-white/70">Simulations</p>
-                    <p className="mt-1 text-2xl font-semibold">
-                      {resultSummary.simulations.toLocaleString()}
-                    </p>
-                  </div>
-                  <div className="rounded-2xl bg-white/10 p-4">
-                    <p className="text-sm text-white/70">Opponents</p>
-                    <p className="mt-1 text-2xl font-semibold">
-                      {resultSummary.opponents}
-                    </p>
                   </div>
                 </div>
-                <p className="mt-3 text-sm leading-6 text-white/72">
+              </div>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              {outcomeStats.map((stat) => (
+                <StatCard
+                  key={stat.label}
+                  label={stat.label}
+                  value={stat.value}
+                  detail={stat.detail}
+                  tone={stat.tone}
+                  isDarkMode={isDarkMode}
+                />
+              ))}
+              <div
+                className={cn(
+                  "rounded-2xl border p-4",
+                  isDarkMode
+                    ? "border-white/10 bg-slate-950/60 shadow-none"
+                    : "border-stone-200 bg-white shadow-[0_16px_40px_-28px_rgba(29,20,12,0.18)]",
+                )}
+              >
+                <div className="mb-3 h-2 rounded-full bg-primary/35" />
+                <p className={cn("text-sm", mutedTextClass)}>Run status</p>
+                <p className={cn("mt-2 text-2xl font-semibold", strongTextClass)}>
+                  {isRunningSimulation ? `${simulationProgress}%` : "Ready"}
+                </p>
+                <p className={cn("mt-2 text-sm", softTextClass)}>
                   {isRunningSimulation
-                    ? `Monte Carlo simulation is running: ${completedSimulations.toLocaleString()} of ${parsedSimulationCount.toLocaleString()} trials complete.`
+                    ? `${completedSimulations.toLocaleString()} trials complete`
                     : simulationResult
-                      ? `Simulation complete for ${simulationResult.simulations.toLocaleString()} trials against ${simulationResult.opponents} opponent${simulationResult.opponents === 1 ? "" : "s"} in ${simulationResult.elapsedMs} ms.`
-                      : "Run a simulation to generate real win, lose, tie, and hand-distribution results."}
+                      ? `${simulationResult.elapsedMs} ms last run`
+                      : "Awaiting first simulation"}
                 </p>
-                <div className="mt-3 h-2.5 rounded-full bg-white/10">
-                  <div
-                    className="h-full rounded-full bg-[linear-gradient(90deg,#d97706,#f6c36b)] transition-[width] duration-200"
-                    style={{ width: `${simulationProgress}%` }}
-                  />
-                </div>
-                <div className="mt-3 flex flex-wrap gap-2 text-xs text-white/70">
-                  <span className="rounded-full border border-white/10 bg-white/8 px-3 py-1">
-                    {isRunningSimulation ? "Worker running" : "Worker idle"}
-                  </span>
-                  <span className="rounded-full border border-white/10 bg-white/8 px-3 py-1">
-                    Best outcome: {bestOutcome.label} {bestOutcome.value}
-                  </span>
-                </div>
               </div>
             </div>
-          </CardContent>
-        </Card>
+          </div>
+        </header>
 
-        <Card className="bg-white/72">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Dices className="size-5 text-primary" />
-              Table Snapshot
-            </CardTitle>
-            <CardDescription>
-              Hole cards and community cards reflect your active selections.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-5">
-            <div className="rounded-2xl border border-border bg-[#fffdf8] px-4 py-3">
-              <p className="text-sm font-medium">Selection Status</p>
-              <p className="mt-1 text-sm text-muted-foreground">
-                {holeCardsSelected}/2 hole cards, {boardCardsSelected}/5 board cards,{" "}
-                {remainingDeckCount} cards remaining in deck.
-              </p>
-                <p className="mt-2 text-sm leading-6 text-muted-foreground">
-                  {statusMessage}
-                </p>
-                <p className="mt-2 text-sm leading-6 text-muted-foreground">
-                  {scenarioSummary}
-                </p>
-                {simulationError ? (
-                  <p className="mt-2 text-sm leading-6 text-red-700">
-                    {simulationError}
+        <section className="grid gap-6 xl:grid-cols-[380px_minmax(0,1fr)_360px]">
+          <div className="grid gap-6">
+            <Card className={panelCardClass}>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Dices className="size-5 text-primary" />
+                  Setup Summary
+                </CardTitle>
+                <CardDescription>
+                  Keep the important controls together and the rest out of the way.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className={cn("rounded-2xl border p-4", mutedPanelClass)}>
+                  <p className={cn("text-sm font-medium", strongTextClass)}>Table status</p>
+                  <p className={cn("mt-2 text-sm leading-6", mutedTextClass)}>
+                    {holeCardsSelected}/2 hole cards selected, {boardCardsSelected}/5 board
+                    cards selected, {remainingDeckCount} cards still available.
                   </p>
-                ) : null}
-                <div className="mt-3 flex flex-wrap gap-2">
-                  <Button variant="outline" size="sm" onClick={dealRandomSetup}>
-                    Random setup
-                </Button>
-                <Button variant="outline" size="sm" onClick={resetTable}>
-                  Reset table
-                </Button>
-              </div>
-            </div>
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <p className="text-sm font-medium">Hole Cards</p>
-                <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
-                  Player 1
-                </p>
-              </div>
-              <div className="flex gap-3">
-                {selectedHoleCards.map((cardId, index) => {
-                  const card = DECK.find((deckCard) => deckCard.id === cardId);
-                  const displayValue = card ? `${card.rank} ${card.symbol}` : "Empty";
-
-                  return (
-                    <button
-                      key={`hole-${index}`}
-                      type="button"
-                      onClick={() => {
-                        setActiveHoleSlot(index);
-                        setActivePicker("hole");
-                      }}
-                      className={`rounded-[1.1rem] transition-transform hover:-translate-y-0.5 ${
-                        activeHoleSlot === index ? "ring-2 ring-primary/35 ring-offset-2 ring-offset-transparent" : ""
-                      }`}
-                    >
-                      <PlayingCard
-                        value={displayValue}
-                        highlighted={Boolean(card)}
-                        accent={card?.tone}
-                      />
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <p className="text-sm font-medium">Community Board</p>
-                <p className="inline-flex items-center gap-1 text-xs font-medium text-primary">
-                  Street-aware
-                  <ChevronDown className="size-3.5" />
-                </p>
-              </div>
-              <div className="flex flex-wrap gap-3">
-                {selectedBoardCards.map((cardId, index) => {
-                  const card = DECK.find((deckCard) => deckCard.id === cardId);
-                  const displayValue = card ? `${card.rank} ${card.symbol}` : "Empty";
-
-                  return (
-                    <button
-                      key={`board-${index}`}
-                      type="button"
-                      onClick={() => {
-                        setActiveBoardSlot(index);
-                        setActivePicker("board");
-                      }}
-                      className={`rounded-[1.1rem] transition-transform hover:-translate-y-0.5 ${
-                        activeBoardSlot === index ? "ring-2 ring-accent/35 ring-offset-2 ring-offset-transparent" : ""
-                      }`}
-                    >
-                      <PlayingCard
-                        value={displayValue}
-                        highlighted={Boolean(card)}
-                        accent={card?.tone}
-                      />
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </section>
-
-      <section className="grid gap-6 xl:grid-cols-[0.92fr_1.08fr]">
-        <div className="grid gap-6">
-          <Card className="bg-white/78">
-            <CardHeader>
-              <CardTitle>Card Selector</CardTitle>
-              <CardDescription>
-                The shared deck now feeds hole cards, board cards, and the
-                live simulation state.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="grid gap-4">
-              <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border bg-muted/20 px-4 py-3 text-sm">
-                <p className="font-medium">
-                  Active picker: <span className="text-primary">{activeTargetLabel}</span>
-                </p>
-                <p className="text-muted-foreground">
-                  Selected cards are removed from the available deck and saved locally.
-                </p>
-              </div>
-
-              <div className="flex flex-wrap gap-2 rounded-2xl border border-border bg-[#fffdf8] p-4">
-                {SCENARIO_PRESETS.map((preset) => (
-                  <Button
-                    key={preset.label}
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setScenarioPreset(preset)}
-                  >
-                    {preset.label}
-                  </Button>
-                ))}
-              </div>
-
-              <div className="flex flex-col gap-3 rounded-2xl border border-border bg-[#fffdf8] p-4 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <p className="text-sm font-medium">Hole card picker</p>
-                  <p className="mt-1 text-sm leading-6 text-muted-foreground">
-                    Click a slot, then choose a card from the deck.
+                  <p className={cn("mt-2 text-sm leading-6", mutedTextClass)}>
+                    {statusMessage}
                   </p>
+                  {simulationError ? (
+                    <p className="mt-2 text-sm leading-6 text-red-700 dark:text-rose-300">
+                      {simulationError}
+                    </p>
+                  ) : null}
                 </div>
-                <Button variant="outline" onClick={clearAllHoleCards}>
-                  Clear hole cards
-                </Button>
-              </div>
 
-              <div className="grid gap-3 sm:grid-cols-2">
-                {selectedHoleCards.map((cardId, index) => {
-                  const card = DECK.find((deckCard) => deckCard.id === cardId);
-
-                  return (
-                    <button
-                      key={`selector-slot-${index}`}
-                      type="button"
-                      onClick={() => {
-                        setActiveHoleSlot(index);
-                        setActivePicker("hole");
-                      }}
-                      className={`rounded-2xl border p-4 text-left transition-colors ${
-                        activeHoleSlot === index
-                          ? "border-primary bg-primary/6"
-                          : "border-border bg-muted/20 hover:bg-muted/35"
-                      }`}
-                    >
-                      <div className="flex items-center justify-between gap-4">
-                        <div>
-                          <p className="text-sm font-medium">Slot {index + 1}</p>
-                          <p className="mt-1 text-sm text-muted-foreground">
-                            {card ? card.label : "Choose a card"}
-                          </p>
-                        </div>
-                        {cardId ? (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              clearHoleSlot(index);
-                            }}
-                          >
-                            Clear
-                          </Button>
-                        ) : null}
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-
-              <div className="grid grid-cols-4 gap-2 sm:grid-cols-6 lg:grid-cols-8">
-                {DECK.map((card) => {
-                  const isUsed = usedCards.has(card.id);
-
-                  return (
-                    <button
-                      key={card.id}
-                      type="button"
-                      disabled={isUsed}
-                      onClick={() =>
-                        activePicker === "hole"
-                          ? handleHoleCardSelect(card.id)
-                          : handleBoardCardSelect(card.id)
-                      }
-                      className={`rounded-xl border px-2 py-3 text-center text-sm font-semibold transition-colors ${
-                        isUsed
-                          ? "cursor-not-allowed border-border bg-muted/45 text-muted-foreground line-through opacity-65"
-                          : "border-border bg-white hover:border-primary/40 hover:bg-primary/6"
-                      }`}
-                    >
-                      <span className={card.tone}>{card.label}</span>
-                    </button>
-                  );
-                })}
-              </div>
-
-              <div className="flex flex-col gap-3 rounded-2xl border border-border bg-[#fffdf8] p-4 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <p className="text-sm font-medium">Board card picker</p>
-                  <p className="mt-1 text-sm leading-6 text-muted-foreground">
-                    Choose flop, turn, and river cards from the same deck.
-                  </p>
+                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
+                  <div className={cn("rounded-2xl border p-4", insetPanelClass)}>
+                    <p className={cn("text-sm", mutedTextClass)}>Focus</p>
+                    <p className="mt-1 text-lg font-semibold">{activeTargetLabel}</p>
+                  </div>
+                  <div className={cn("rounded-2xl border p-4", insetPanelClass)}>
+                    <p className={cn("text-sm", mutedTextClass)}>Best outcome</p>
+                    <p className="mt-1 text-lg font-semibold">
+                      {bestOutcome.label} {bestOutcome.value}
+                    </p>
+                  </div>
                 </div>
+
                 <div className="flex flex-wrap gap-2">
-                  <Button variant="outline" onClick={clearAllBoardCards}>
-                    Clear board
-                  </Button>
-                  {STREET_PRESETS.map((preset) => (
+                  {SCENARIO_PRESETS.map((preset) => (
                     <Button
                       key={preset.label}
                       variant="outline"
                       size="sm"
-                      onClick={() => dealBoardThrough(preset.count)}
+                      className={outlineButtonClass}
+                      onClick={() => setScenarioPreset(preset)}
                     >
                       {preset.label}
                     </Button>
                   ))}
                 </div>
-              </div>
+              </CardContent>
+            </Card>
 
-              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-                {selectedBoardCards.map((cardId, index) => {
-                  const card = DECK.find((deckCard) => deckCard.id === cardId);
-
-                  return (
-                    <button
-                      key={`board-slot-${index}`}
-                      type="button"
-                      onClick={() => {
-                        setActiveBoardSlot(index);
-                        setActivePicker("board");
-                      }}
-                      className={`rounded-2xl border p-4 text-left transition-colors ${
-                        activeBoardSlot === index
-                          ? "border-accent bg-accent/8"
-                          : "border-border bg-muted/20 hover:bg-muted/35"
-                      }`}
-                    >
-                      <div className="flex items-center justify-between gap-4">
-                        <div>
-                          <p className="text-sm font-medium">{BOARD_STREETS[index]}</p>
-                          <p className="mt-1 text-sm text-muted-foreground">
-                            {card ? card.label : "Choose a card"}
-                          </p>
-                        </div>
-                        {cardId ? (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              clearBoardSlot(index);
-                            }}
-                          >
-                            Clear
-                          </Button>
-                        ) : null}
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="bg-white/78">
-            <CardHeader>
-              <CardTitle>Simulation Controls</CardTitle>
-              <CardDescription>
-                Controls are live now, with validation, opponent count, and quick presets.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="flex flex-wrap gap-2">
-                {SIMULATION_PRESETS.map((preset) => (
-                  <Button
-                    key={preset}
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setSimulationInput(String(preset))}
-                  >
-                    {preset.toLocaleString()}
-                  </Button>
-                ))}
-              </div>
-              <div className="flex flex-wrap gap-2">
-                {OPPONENT_PRESETS.map((preset) => (
-                  <Button
-                    key={preset}
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setOpponentCount(preset)}
-                  >
-                    {preset} opponent{preset === 1 ? "" : "s"}
-                  </Button>
-                ))}
-              </div>
-              <div className="grid gap-4 sm:grid-cols-[1fr_auto]">
-                <div className="space-y-2">
+            <Card className={panelCardClass}>
+              <CardHeader>
+                <CardTitle>Simulation Controls</CardTitle>
+                <CardDescription>
+                  Set scale, opponent count, and launch background runs from one place.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-5">
+                <div className="space-y-3">
                   <label
                     htmlFor="simulations"
                     className="text-sm font-medium text-foreground"
@@ -1045,20 +1010,22 @@ export default function Home() {
                     onChange={(event) => setSimulationInput(event.target.value)}
                     placeholder="25000"
                   />
+                  <div className="flex flex-wrap gap-2">
+                    {SIMULATION_PRESETS.map((preset) => (
+                      <Button
+                        key={preset}
+                        variant="outline"
+                        size="sm"
+                        className={outlineButtonClass}
+                        onClick={() => setSimulationInput(String(preset))}
+                      >
+                        {preset.toLocaleString()}
+                      </Button>
+                    ))}
+                  </div>
                 </div>
-                <div className="flex items-end">
-                  <Button
-                    size="lg"
-                    className="w-full sm:w-auto"
-                    onClick={runPlaceholderSimulation}
-                    disabled={!canRunSimulation || isRunningSimulation}
-                  >
-                    {isRunningSimulation ? "Simulating..." : "Simulate Hands"}
-                  </Button>
-                </div>
-              </div>
-              <div className="grid gap-4 sm:grid-cols-[1fr_auto_auto]">
-                <div className="space-y-2">
+
+                <div className="space-y-3">
                   <label
                     htmlFor="opponents"
                     className="text-sm font-medium text-foreground"
@@ -1078,318 +1045,491 @@ export default function Home() {
                     }
                     placeholder="1"
                   />
+                  <div className="flex flex-wrap gap-2">
+                    {OPPONENT_PRESETS.map((preset) => (
+                      <Button
+                        key={preset}
+                        variant="outline"
+                        size="sm"
+                        className={outlineButtonClass}
+                        onClick={() => setOpponentCount(preset)}
+                      >
+                        {preset} opponent{preset === 1 ? "" : "s"}
+                      </Button>
+                    ))}
+                  </div>
                 </div>
-                <div className="flex items-end">
-                  <Button
-                    variant="outline"
-                    onClick={() => setOpponentCount((current) => Math.max(1, current - 1))}
-                  >
-                    Fewer
-                  </Button>
-                </div>
-                <div className="flex items-end">
-                  <Button
-                    variant="outline"
-                    onClick={() => setOpponentCount((current) => Math.min(9, current + 1))}
-                  >
-                    More
-                  </Button>
-                </div>
-              </div>
-              <div className="grid gap-3 sm:grid-cols-3">
-                <div className="rounded-2xl bg-muted/45 p-4 text-sm">
-                  <p className="font-medium">Trials</p>
-                  <p className="mt-1 text-muted-foreground">
-                    {isSimulationCountValid
-                      ? parsedSimulationCount.toLocaleString()
-                      : "Invalid count"}
-                  </p>
-                </div>
-                <div className="rounded-2xl bg-muted/45 p-4 text-sm">
-                  <p className="font-medium">Board Street</p>
-                  <p className="mt-1 text-muted-foreground">
-                    {boardStage}
-                  </p>
-                </div>
-                <div className="rounded-2xl bg-muted/45 p-4 text-sm">
-                  <p className="font-medium">Opponent Count</p>
-                  <p className="mt-1 text-muted-foreground">
-                    {opponentCount}
-                  </p>
-                </div>
-              </div>
-              <div className="rounded-2xl bg-muted/45 p-4 text-sm">
-                <p className="font-medium">Run Readiness</p>
-                <p className="mt-1 text-muted-foreground">
-                  {canRunSimulation ? "Ready to simulate" : "Needs input"}
-                </p>
-              </div>
-              <div className="rounded-2xl bg-muted/45 p-4 text-sm">
-                <p className="font-medium">Progress</p>
-                <p className="mt-1 text-muted-foreground">
-                  {isRunningSimulation
-                    ? `${simulationProgress}% complete`
-                    : simulationResult
-                      ? "Last run finished"
-                      : "No run yet"}
-                </p>
-              </div>
-              <div className="rounded-2xl border border-border bg-[#fffdf8] p-4 text-sm leading-6 text-muted-foreground">
-                Current setup is saved automatically in your browser, including the
-                latest simulation snapshot.
-              </div>
-              <div className="rounded-2xl bg-muted/45 p-4 text-sm leading-6 text-muted-foreground">
-                Results now come from a background worker simulation using your current
-                cards, board state, and opponent count, so the UI stays responsive
-                during larger runs.
-              </div>
-            </CardContent>
-          </Card>
-        </div>
 
-        <div className="grid gap-6">
-          <Card className="bg-white/78">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className={cn("rounded-2xl border p-4 text-sm", mutedPanelClass)}>
+                    <p className={cn("font-medium", strongTextClass)}>Run readiness</p>
+                    <p className={cn("mt-2", mutedTextClass)}>
+                      {canRunSimulation ? "Ready to simulate" : "Needs input"}
+                    </p>
+                  </div>
+                  <div className={cn("rounded-2xl border p-4 text-sm", mutedPanelClass)}>
+                    <p className={cn("font-medium", strongTextClass)}>Worker status</p>
+                    <p className={cn("mt-2", mutedTextClass)}>
+                      {isRunningSimulation ? "Running in background" : "Idle"}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex gap-3">
+                  <Button
+                    className="flex-1"
+                    onClick={runSimulation}
+                    disabled={!canRunSimulation || isRunningSimulation}
+                  >
+                    <Play className="mr-2 size-4" />
+                    {isRunningSimulation ? "Simulating..." : "Simulate"}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className={outlineButtonClass}
+                    onClick={resetTable}
+                  >
+                    <RotateCcw className="mr-2 size-4" />
+                    Reset
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+
+          <div className="grid gap-6">
+            <Card className={panelCardClass}>
+              <CardHeader>
+                <CardTitle>Table Builder</CardTitle>
+                <CardDescription>
+                  Hole cards, community board, and deck controls stay separated so the
+                  table is easier to read.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm font-medium">Hole cards</p>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className={outlineButtonClass}
+                      onClick={clearAllHoleCards}
+                    >
+                      Clear all
+                    </Button>
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    {selectedHoleCards.map((cardId, index) => {
+                      const card = getCardDetails(cardId);
+
+                      return (
+                        <div
+                          key={`hole-slot-${index}`}
+                          className={`rounded-2xl border p-4 ${
+                            activePicker === "hole" && activeHoleSlot === index
+                              ? "border-primary bg-primary/5"
+                            : cn("border", insetPanelClass)
+                          }`}
+                        >
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setActiveHoleSlot(index);
+                              setActivePicker("hole");
+                            }}
+                            className="flex w-full items-start gap-4 text-left"
+                          >
+                          <PlayingCard
+                            value={card ? `${card.rank}${card.symbol}` : "--"}
+                            caption={`Hole ${index + 1}`}
+                            accent={card?.tone}
+                            active={activePicker === "hole" && activeHoleSlot === index}
+                            filled={Boolean(card)}
+                            isDarkMode={isDarkMode}
+                          />
+                            <div className="space-y-2">
+                              <p className="text-sm font-medium">Hero slot {index + 1}</p>
+                              <p className={cn("text-sm", mutedTextClass)}>
+                                {card ? card.label : "Choose a card from the deck"}
+                              </p>
+                            </div>
+                          </button>
+                          {cardId ? (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className={cn("mt-4 w-full", outlineButtonClass)}
+                              onClick={() => clearHoleSlot(index)}
+                            >
+                              Clear slot
+                            </Button>
+                          ) : null}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="space-y-3">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <p className="text-sm font-medium">Community board</p>
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className={outlineButtonClass}
+                        onClick={clearAllBoardCards}
+                      >
+                        Clear board
+                      </Button>
+                      {STREET_PRESETS.map((preset) => (
+                        <Button
+                          key={preset.label}
+                          variant="outline"
+                          size="sm"
+                          className={outlineButtonClass}
+                          onClick={() => dealBoardThrough(preset.count)}
+                        >
+                          {preset.label}
+                        </Button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+                    {selectedBoardCards.map((cardId, index) => {
+                      const card = getCardDetails(cardId);
+
+                      return (
+                        <div
+                          key={`board-slot-${index}`}
+                          className={`rounded-2xl border p-4 ${
+                            activePicker === "board" && activeBoardSlot === index
+                              ? "border-accent bg-accent/8"
+                            : cn("border", insetPanelClass)
+                          }`}
+                        >
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setActiveBoardSlot(index);
+                              setActivePicker("board");
+                            }}
+                            className="space-y-3 text-left"
+                          >
+                            <p className="text-sm font-medium">{BOARD_STREETS[index]}</p>
+                            <PlayingCard
+                              value={card ? `${card.rank}${card.symbol}` : "--"}
+                              caption={boardStage}
+                              accent={card?.tone}
+                              active={activePicker === "board" && activeBoardSlot === index}
+                              filled={Boolean(card)}
+                              isDarkMode={isDarkMode}
+                            />
+                            <p className={cn("text-sm", mutedTextClass)}>
+                              {card ? card.label : "Choose a card"}
+                            </p>
+                          </button>
+                          {cardId ? (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className={cn("mt-4 w-full", outlineButtonClass)}
+                              onClick={() => clearBoardSlot(index)}
+                            >
+                              Clear slot
+                            </Button>
+                          ) : null}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className={panelCardClass}>
+              <CardHeader>
+                <CardTitle>Deck</CardTitle>
+                <CardDescription>
+                  Click any available card to place it into the active slot.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className={cn("flex flex-wrap items-center justify-between gap-3 rounded-2xl border px-4 py-3 text-sm", mutedPanelClass)}>
+                  <p className={cn("font-medium", strongTextClass)}>
+                    Active target: <span className="text-primary">{activeTargetLabel}</span>
+                  </p>
+                  <p className={mutedTextClass}>
+                    {remainingDeckCount} cards available in the deck
+                  </p>
+                </div>
+                <div className="grid grid-cols-4 gap-2 sm:grid-cols-6 lg:grid-cols-8">
+                  {DECK.map((card) => {
+                    const isUsed = usedCards.has(card.id);
+
+                    return (
+                      <button
+                        key={card.id}
+                        type="button"
+                        disabled={isUsed}
+                        onClick={() =>
+                          activePicker === "hole"
+                            ? handleHoleCardSelect(card.id)
+                            : handleBoardCardSelect(card.id)
+                        }
+                        className={`rounded-xl border px-2 py-3 text-center text-sm font-semibold transition-colors ${
+                          isUsed
+                            ? isDarkMode
+                              ? "cursor-not-allowed border-white/10 bg-muted/45 text-muted-foreground line-through opacity-70"
+                              : "cursor-not-allowed border-stone-200 bg-stone-100 text-stone-500 line-through opacity-70"
+                            : isDarkMode
+                              ? "border-white/10 bg-slate-950/55 text-foreground hover:border-primary/40 hover:bg-primary/12"
+                              : "border-stone-200 bg-white text-slate-900 hover:border-primary/40 hover:bg-primary/6"
+                        }`}
+                      >
+                        <span className={card.tone}>{card.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+
+          <div className="grid gap-6">
+            <Card className={panelCardClass}>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <TrendingUp className="size-5 text-primary" />
+                  Results
+                </CardTitle>
+                <CardDescription>
+                  Core odds, run state, and made-hand trends stay in one organized column.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid gap-3">
+                  {outcomeStats.map((stat) => (
+                    <StatCard
+                      key={`results-${stat.label}`}
+                      label={stat.label}
+                      value={stat.value}
+                      detail={
+                        isRunningSimulation
+                          ? "Worker updating this result"
+                          : simulationResult
+                            ? "Latest simulation"
+                            : "Awaiting run"
+                      }
+                      tone={stat.tone}
+                      isDarkMode={isDarkMode}
+                    />
+                  ))}
+                </div>
+                <div className={cn("rounded-2xl border p-4", insetPanelClass)}>
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className={cn("text-sm font-medium", strongTextClass)}>Progress</p>
+                      <p className={cn("mt-1 text-sm", mutedTextClass)}>
+                        {isRunningSimulation
+                          ? `${completedSimulations.toLocaleString()} / ${parsedSimulationCount.toLocaleString()} trials`
+                          : simulationResult
+                            ? `${simulationResult.simulations.toLocaleString()} completed`
+                            : "No simulation run yet"}
+                      </p>
+                    </div>
+                    <div className="text-right">
+                      <p className={cn("text-lg font-semibold", strongTextClass)}>{simulationProgress}%</p>
+                      <p className={cn("text-xs", softTextClass)}>
+                        {isRunningSimulation ? "In progress" : "Last known"}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="mt-4 h-2.5 rounded-full bg-muted">
+                    <div
+                      className="h-full rounded-full bg-[linear-gradient(90deg,var(--primary),var(--accent))] transition-[width] duration-200"
+                      style={{ width: `${simulationProgress}%` }}
+                    />
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className={panelCardClass}>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <ShieldCheck className="size-5 text-primary" />
+                  Result Details
+                </CardTitle>
+                <CardDescription>
+                  Quick readout of the strongest outcomes and run speed.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="grid gap-3">
+                <div className={cn("rounded-2xl border p-4", insetPanelClass)}>
+                  <p className={cn("text-sm", mutedTextClass)}>Best outcome</p>
+                  <p className="mt-1 text-lg font-semibold">
+                    {bestOutcome.label} {bestOutcome.value}
+                  </p>
+                </div>
+                <div className={cn("rounded-2xl border p-4", insetPanelClass)}>
+                  <p className={cn("text-sm", mutedTextClass)}>Most frequent made hand</p>
+                  <p className="mt-1 text-lg font-semibold">
+                    {topHandLabels[0]?.label ?? "N/A"}
+                  </p>
+                  <p className={cn("mt-1 text-sm", mutedTextClass)}>
+                    {topHandLabels[0] ? formatPercent(topHandLabels[0].value) : "0.0%"}
+                  </p>
+                </div>
+                <div className={cn("rounded-2xl border p-4", insetPanelClass)}>
+                  <p className={cn("text-sm", mutedTextClass)}>Run speed</p>
+                  <p className="mt-1 text-lg font-semibold">
+                    {simulationResult ? `${simulationResult.elapsedMs} ms` : "Not run yet"}
+                  </p>
+                  <p className={cn("mt-1 text-sm", mutedTextClass)}>
+                    {simulationResult
+                      ? `${Math.round(
+                          simulationResult.simulations /
+                            Math.max(simulationResult.elapsedMs, 1),
+                        )} trials/ms`
+                      : "Waiting for the first simulation"}
+                  </p>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className={panelCardClass}>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <History className="size-5 text-accent" />
+                  Recent Runs
+                </CardTitle>
+                <CardDescription>
+                  Last simulations stay close by without taking over the whole screen.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {runHistory.length === 0 ? (
+                  <div className={cn("rounded-2xl border border-dashed p-4 text-sm", mutedPanelClass, mutedTextClass)}>
+                    No completed runs yet.
+                  </div>
+                ) : (
+                  runHistory.map((entry) => (
+                    <div
+                      key={entry.id}
+                      className={cn("rounded-2xl border p-4", insetPanelClass)}
+                    >
+                      <div className="flex items-start justify-between gap-4">
+                        <div className="space-y-1">
+                          <p className="text-sm font-medium">{entry.summary}</p>
+                          <p className={cn("text-xs", softTextClass)}>
+                            {new Date(entry.createdAt).toLocaleString()}
+                          </p>
+                        </div>
+                        <div className="inline-flex items-center gap-1 rounded-full bg-primary/8 px-2.5 py-1 text-xs font-medium text-primary">
+                          <CheckCircle2 className="size-3.5" />
+                          {formatPercent(entry.result.win)} win
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        </section>
+
+        <section className="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
+          <Card className={panelCardClass}>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <TrendingUp className="size-5 text-primary" />
-                Results Overview
+                <BarChart3 className="size-5 text-accent" />
+                Hand Type Breakdown
               </CardTitle>
               <CardDescription>
-                Results now react to the current setup, board stage, and opponent count.
+                Hero final-hand distribution across completed trials.
               </CardDescription>
             </CardHeader>
-            <CardContent className="grid gap-4 sm:grid-cols-3">
-              {outcomeStats.map((stat) => (
-                <div
-                  key={stat.label}
-                  className="rounded-2xl border border-border bg-[#fffdf8] p-5"
-                >
-                  <p className="text-sm text-muted-foreground">{stat.label}</p>
-                  <p className="mt-2 text-3xl font-semibold">{stat.value}</p>
-                  <p className="mt-2 text-sm text-muted-foreground">
-                    {isRunningSimulation
-                      ? "Worker updating"
-                      : simulationResult
-                        ? "Latest simulation"
-                        : "Awaiting run"}
-                  </p>
+            <CardContent className="space-y-4">
+              {handBreakdown.map(([label, value]) => (
+                <div key={label} className="space-y-2">
+                  <div className="flex items-center justify-between text-sm">
+                    <span>{label}</span>
+                    <span className="font-medium">{formatPercent(value)}</span>
+                  </div>
+                  <div className="h-2.5 rounded-full bg-muted">
+                    <div
+                      className="h-full rounded-full bg-[linear-gradient(90deg,var(--primary),var(--accent))]"
+                      style={{ width: `${Math.max(Number(value), 1)}%` }}
+                    />
+                  </div>
                 </div>
               ))}
             </CardContent>
           </Card>
 
-          <Card className="bg-white/78">
+          <Card className={panelCardClass}>
             <CardHeader>
-              <CardTitle>Scenario Summary</CardTitle>
+              <CardTitle className="flex items-center gap-2">
+                <ChartColumnIncreasing className="size-5 text-secondary" />
+                Visual Summary
+              </CardTitle>
               <CardDescription>
-                Quick readout of the current setup and latest simulation context.
+                Organized summaries of the latest run instead of one crowded results wall.
               </CardDescription>
             </CardHeader>
             <CardContent className="grid gap-4 sm:grid-cols-2">
-              <div className="rounded-2xl border border-border bg-[#fffdf8] p-5">
-                <p className="text-sm text-muted-foreground">Spot</p>
-                <p className="mt-2 text-lg font-semibold">{boardStage}</p>
-                <p className="mt-2 text-sm text-muted-foreground">{scenarioSummary}</p>
-              </div>
-              <div className="rounded-2xl border border-border bg-[#fffdf8] p-5">
-                <p className="text-sm text-muted-foreground">Focus</p>
-                <p className="mt-2 text-lg font-semibold">
-                  {activePicker === "hole" ? "Hole cards" : "Community board"}
-                </p>
-                <p className="mt-2 text-sm text-muted-foreground">
-                  Editing {activeTargetLabel.toLowerCase()} with {remainingDeckCount} live
-                  cards left in the deck.
-                </p>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="bg-white/78">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <ShieldCheck className="size-5 text-primary" />
-                Result Details
-              </CardTitle>
-              <CardDescription>
-                Quick insight into the strongest current outcome and simulation speed.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="grid gap-4 sm:grid-cols-3">
-              <div className="rounded-2xl border border-border bg-[#fffdf8] p-5">
-                <p className="text-sm text-muted-foreground">Best Outcome</p>
-                <p className="mt-2 text-lg font-semibold">{bestOutcome.label}</p>
-                <p className="mt-2 text-sm text-muted-foreground">{bestOutcome.value}</p>
-              </div>
-              <div className="rounded-2xl border border-border bg-[#fffdf8] p-5">
-                <p className="text-sm text-muted-foreground">Top Made Hand</p>
-                <p className="mt-2 text-lg font-semibold">{topHandLabels[0]?.label ?? "N/A"}</p>
-                <p className="mt-2 text-sm text-muted-foreground">
-                  {topHandLabels[0] ? formatPercent(topHandLabels[0].value) : "0.0%"}
-                </p>
-              </div>
-              <div className="rounded-2xl border border-border bg-[#fffdf8] p-5">
-                <p className="text-sm text-muted-foreground">Run Speed</p>
-                <p className="mt-2 text-lg font-semibold">
-                  {simulationResult ? `${simulationResult.elapsedMs} ms` : "Not run yet"}
-                </p>
-                <p className="mt-2 text-sm text-muted-foreground">
-                  {simulationResult
-                    ? `${Math.round(simulationResult.simulations / Math.max(simulationResult.elapsedMs, 1))} trials/ms`
-                    : "Waiting for first simulation"}
-                </p>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="bg-white/78">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <History className="size-5 text-accent" />
-                Recent Runs
-              </CardTitle>
-              <CardDescription>
-                Your last few simulations stay available in local state for quick reference.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              {runHistory.length === 0 ? (
-                <div className="rounded-2xl border border-dashed border-border bg-muted/20 p-4 text-sm text-muted-foreground">
-                  No completed runs yet.
+              <div className="rounded-2xl border border-dashed border-border bg-[linear-gradient(180deg,rgba(15,118,110,0.05),rgba(15,118,110,0.16))] p-4">
+                <p className="text-sm font-medium">Win indicator</p>
+                <div
+                  className={cn(
+                    "mt-6 flex aspect-square items-center justify-center rounded-full border-[14px] border-primary/18 border-t-primary",
+                    isDarkMode ? "bg-slate-950/40" : "bg-white/80",
+                  )}
+                >
+                  <div className="text-center">
+                    <p className="text-3xl font-semibold">
+                      {isRunningSimulation ? (
+                        <span className="inline-flex items-center gap-2">
+                          <LoaderCircle className="size-5 animate-spin" />
+                          {simulationProgress}%
+                        </span>
+                      ) : (
+                        formatPercent(resultSummary.win)
+                      )}
+                    </p>
+                    <p className={cn("mt-1 text-sm", mutedTextClass)}>Win rate</p>
+                  </div>
                 </div>
-              ) : (
-                runHistory.map((entry) => (
-                  <div
-                    key={entry.id}
-                    className="rounded-2xl border border-border bg-[#fffdf8] p-4"
-                  >
-                    <div className="flex items-start justify-between gap-4">
-                      <div className="space-y-1">
-                        <p className="text-sm font-medium">{entry.summary}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {new Date(entry.createdAt).toLocaleString()}
-                        </p>
-                      </div>
-                      <div className="inline-flex items-center gap-1 rounded-full bg-primary/8 px-2.5 py-1 text-xs font-medium text-primary">
-                        <CheckCircle2 className="size-3.5" />
-                        {formatPercent(entry.result.win)} win
-                      </div>
-                    </div>
-                    <div className="mt-3 grid gap-2 sm:grid-cols-3">
-                      <div className="rounded-xl bg-muted/30 px-3 py-2 text-sm">
-                        Win {formatPercent(entry.result.win)}
-                      </div>
-                      <div className="rounded-xl bg-muted/30 px-3 py-2 text-sm">
-                        Tie {formatPercent(entry.result.tie)}
-                      </div>
-                      <div className="rounded-xl bg-muted/30 px-3 py-2 text-sm">
-                        {entry.result.elapsedMs} ms
-                      </div>
-                    </div>
-                  </div>
-                ))
-              )}
-            </CardContent>
-          </Card>
+              </div>
 
-          <div className="grid gap-6 lg:grid-cols-[0.9fr_1.1fr]">
-            <Card className="bg-white/78">
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <BarChart3 className="size-5 text-accent" />
-                  Hand Type Breakdown
-                </CardTitle>
-                <CardDescription>
-                  Hero final-hand distribution across completed simulation trials.
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                {handBreakdown.map(([label, value]) => (
-                  <div key={label} className="space-y-2">
-                    <div className="flex items-center justify-between text-sm">
-                      <span>{label}</span>
-                      <span className="font-medium">{value}%</span>
-                    </div>
-                    <div className="h-2.5 rounded-full bg-muted">
-                      <div
-                        className="h-full rounded-full bg-[linear-gradient(90deg,var(--primary),var(--accent))]"
-                        style={{ width: `${Math.max(Number(value), 1)}%` }}
-                      />
-                    </div>
-                  </div>
-                ))}
-                <div className="rounded-2xl bg-muted/30 p-4">
-                  <p className="text-sm font-medium">Most Frequent Results</p>
-                  <div className="mt-3 grid gap-2">
-                    {topHandLabels.map((entry) => (
-                      <div
-                        key={entry.label}
-                        className="flex items-center justify-between rounded-xl bg-[#fffdf8] px-3 py-2 text-sm"
-                      >
+              <div className="rounded-2xl border border-dashed border-border bg-[linear-gradient(180deg,rgba(217,119,6,0.04),rgba(217,119,6,0.14))] p-4">
+                <p className="text-sm font-medium">Top outcomes</p>
+                <div className="mt-6 space-y-3">
+                  {topHandLabels.map((entry) => (
+                    <div
+                      key={entry.label}
+                      className={cn(
+                        "rounded-2xl px-4 py-3",
+                        isDarkMode
+                          ? "bg-slate-950/40 shadow-none"
+                          : "bg-white shadow-[0_10px_24px_-18px_rgba(29,20,12,0.18)]",
+                      )}
+                    >
+                      <div className="flex items-center justify-between text-sm">
                         <span>{entry.label}</span>
                         <span className="font-medium">{formatPercent(entry.value)}</span>
                       </div>
-                    ))}
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card className="bg-white/78">
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <ChartColumnIncreasing className="size-5 text-secondary" />
-                  Charts
-                </CardTitle>
-                <CardDescription>
-                  Visual summaries generated from the latest simulation run.
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="grid gap-4 sm:grid-cols-2">
-                <div className="rounded-2xl border border-dashed border-border bg-[linear-gradient(180deg,rgba(15,118,110,0.05),rgba(15,118,110,0.18))] p-4">
-                  <p className="text-sm font-medium">Outcome donut chart</p>
-                  <div className="mt-6 flex aspect-square items-center justify-center rounded-full border-12 border-primary/18 border-t-primary bg-white/50">
-                    <div className="text-center">
-                      <p className="text-3xl font-semibold">
-                        {isRunningSimulation ? (
-                          <span className="inline-flex items-center gap-2">
-                            <LoaderCircle className="size-5 animate-spin" />
-                            {simulationProgress}%
-                          </span>
-                        ) : (
-                          formatPercent(resultSummary.win)
-                        )}
-                      </p>
-                      <p className="mt-1 text-sm text-muted-foreground">Win rate</p>
                     </div>
-                  </div>
+                  ))}
                 </div>
-                <div className="rounded-2xl border border-dashed border-border bg-[linear-gradient(180deg,rgba(217,119,6,0.04),rgba(217,119,6,0.14))] p-4">
-                  <p className="text-sm font-medium">Street-by-street trend</p>
-                  <div className="mt-6 flex h-48 items-end gap-3 rounded-2xl bg-white/55 p-4">
-                    {[
-                      Math.max(18, Math.round(resultSummary.tie * 4)),
-                      Math.max(24, Math.round(resultSummary.lose)),
-                      Math.max(30, Math.round(resultSummary.win)),
-                      Math.max(36, Math.round(resultSummary.win + resultSummary.tie / 2)),
-                      Math.max(42, Math.round(resultSummary.win + boardCardsSelected * 4)),
-                    ].map((height, index) => (
-                      <div key={height} className="flex-1 space-y-2">
-                        <div
-                          className="rounded-t-xl bg-secondary/82"
-                          style={{ height: `${height}%` }}
-                        />
-                        <p className="text-center text-xs text-muted-foreground">
-                          {["P", "F", "F", "T", "R"][index]}
-                        </p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-        </div>
-      </section>
+              </div>
+            </CardContent>
+          </Card>
+        </section>
+      </div>
     </main>
   );
 }
