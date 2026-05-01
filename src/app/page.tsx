@@ -42,10 +42,34 @@ const DECK = RANKS.flatMap((rank) =>
 
 const BOARD_STREETS = ["Flop 1", "Flop 2", "Flop 3", "Turn", "River"] as const;
 const SIMULATION_PRESETS = [5000, 25000, 100000] as const;
+const OPPONENT_PRESETS = [1, 3, 6, 9] as const;
 const STREET_PRESETS = [
   { label: "Deal Flop", count: 3 },
   { label: "Deal Turn", count: 4 },
   { label: "Deal River", count: 5 },
+] as const;
+const SCENARIO_PRESETS = [
+  {
+    label: "Pocket Aces",
+    holeCards: ["AS", "AH"],
+    boardCards: [null, null, null, null, null],
+    activePicker: "board" as const,
+    activeBoardSlot: 0,
+  },
+  {
+    label: "Big Slick Draw",
+    holeCards: ["AS", "KS"],
+    boardCards: ["QS", "JD", "2S", null, null],
+    activePicker: "board" as const,
+    activeBoardSlot: 3,
+  },
+  {
+    label: "Set on Flop",
+    holeCards: ["9C", "9D"],
+    boardCards: ["9H", "KS", "2D", null, null],
+    activePicker: "board" as const,
+    activeBoardSlot: 3,
+  },
 ] as const;
 const HAND_LABELS = [
   "High Card",
@@ -66,6 +90,7 @@ type SimulationSnapshot = {
   tie: number;
   handBreakdown: number[];
   simulations: number;
+  opponents: number;
 };
 
 type PersistedState = {
@@ -74,6 +99,7 @@ type PersistedState = {
   activeHoleSlot: number;
   activeBoardSlot: number;
   activePicker: "hole" | "board";
+  opponentCount: number;
   simulationInput: string;
   simulationResult: SimulationSnapshot | null;
 };
@@ -122,17 +148,20 @@ function generatePlaceholderResults(
   holeCards: (string | null)[],
   boardCards: (string | null)[],
   simulationCount: number,
+  opponentCount: number,
 ): SimulationSnapshot {
   const seedSource = [...holeCards, ...boardCards].filter(Boolean).join("-");
-  let seed = simulationCount;
+  let seed = simulationCount + opponentCount * 31;
 
   for (const char of seedSource) {
     seed += char.charCodeAt(0) * 17;
   }
 
-  const win = 32 + (seed % 29);
-  const tie = 2 + (Math.floor(seed / 7) % 10);
-  const lose = 100 - win - tie;
+  const boardCardsSelected = boardCards.filter(Boolean).length;
+  const baseWin = 58 - opponentCount * 4 + boardCardsSelected * 2;
+  const win = Math.min(78, Math.max(12, baseWin + (seed % 11) - 5));
+  const tie = Math.min(12, Math.max(1, 1 + boardCardsSelected + (Math.floor(seed / 7) % 4)));
+  const lose = Math.max(0.5, Number((100 - win - tie).toFixed(1)));
 
   const rawBreakdown = HAND_LABELS.map((_, index) => {
     if (index === HAND_LABELS.length - 1) {
@@ -161,6 +190,7 @@ function generatePlaceholderResults(
     tie,
     handBreakdown,
     simulations: simulationCount,
+    opponents: opponentCount,
   };
 }
 
@@ -218,6 +248,9 @@ export default function Home() {
   const [activePicker, setActivePicker] = useState<"hole" | "board">(
     persistedState?.activePicker === "board" ? "board" : "hole",
   );
+  const [opponentCount, setOpponentCount] = useState(
+    clampIndex(persistedState?.opponentCount ?? 1, 9) || 1,
+  );
   const [simulationInput, setSimulationInput] = useState(
     persistedState?.simulationInput ?? "25000",
   );
@@ -232,6 +265,7 @@ export default function Home() {
       activeHoleSlot,
       activeBoardSlot,
       activePicker,
+      opponentCount,
       simulationInput,
       simulationResult,
     };
@@ -241,6 +275,7 @@ export default function Home() {
     activeBoardSlot,
     activeHoleSlot,
     activePicker,
+    opponentCount,
     selectedBoardCards,
     selectedHoleCards,
     simulationInput,
@@ -263,17 +298,37 @@ export default function Home() {
     Number.isFinite(parsedSimulationCount) &&
     parsedSimulationCount >= 1000 &&
     parsedSimulationCount <= 500000;
+  const isOpponentCountValid = opponentCount >= 1 && opponentCount <= 9;
   const canRunPlaceholder =
-    holeCardsSelected === 2 && !hasBoardGap && isSimulationCountValid;
+    holeCardsSelected === 2 &&
+    !hasBoardGap &&
+    isSimulationCountValid &&
+    isOpponentCountValid;
   const activeTargetLabel =
     activePicker === "hole"
       ? `Hole card slot ${activeHoleSlot + 1}`
       : BOARD_STREETS[activeBoardSlot];
+  const boardStage =
+    boardCardsSelected === 0
+      ? "Preflop"
+      : boardCardsSelected <= 3
+        ? "Flop"
+        : boardCardsSelected === 4
+          ? "Turn"
+          : "River";
+  const scenarioSummary = [
+    selectedHoleCards.filter(Boolean).join(" ") || "No hole cards",
+    selectedBoardCards.filter(Boolean).join(" ") || "No board cards",
+    `vs ${opponentCount} opponent${opponentCount === 1 ? "" : "s"}`,
+    boardStage,
+  ].join(" • ");
   const statusMessage =
     holeCardsSelected < 2
       ? "Choose both hole cards to unlock placeholder simulation runs."
       : hasBoardGap
         ? "Fill community cards from left to right so the board state stays valid."
+        : !isOpponentCountValid
+          ? "Choose between 1 and 9 opponents."
         : !isSimulationCountValid
           ? "Enter a simulation count between 1,000 and 500,000."
           : "Selections look valid. You can run a placeholder simulation now.";
@@ -283,6 +338,7 @@ export default function Home() {
       selectedHoleCards,
       selectedBoardCards,
       isSimulationCountValid ? parsedSimulationCount : 25000,
+      isOpponentCountValid ? opponentCount : 1,
     );
   const outcomeStats = [
     { label: "Win", value: formatPercent(resultSummary.win), tone: "bg-primary" },
@@ -293,6 +349,17 @@ export default function Home() {
     label,
     resultSummary.handBreakdown[index],
   ] as const);
+
+  function setScenarioPreset(
+    preset: (typeof SCENARIO_PRESETS)[number],
+  ) {
+    setSelectedHoleCards([...preset.holeCards]);
+    setSelectedBoardCards([...preset.boardCards]);
+    setActiveHoleSlot(0);
+    setActiveBoardSlot(preset.activeBoardSlot);
+    setActivePicker(preset.activePicker);
+    setSimulationResult(null);
+  }
 
   function handleHoleCardSelect(cardId: string) {
     const shouldAdvanceSlot =
@@ -396,6 +463,7 @@ export default function Home() {
     setActiveHoleSlot(0);
     setActiveBoardSlot(0);
     setActivePicker("hole");
+    setOpponentCount(1);
     setSimulationInput("25000");
     setSimulationResult(null);
   }
@@ -444,6 +512,7 @@ export default function Home() {
         selectedHoleCards,
         selectedBoardCards,
         parsedSimulationCount,
+        opponentCount,
       ),
     );
   }
@@ -506,12 +575,20 @@ export default function Home() {
                   ))}
                   <div className="rounded-2xl bg-white/10 p-4">
                     <p className="text-sm text-white/70">Simulations</p>
-                    <p className="mt-1 text-2xl font-semibold">25,000</p>
+                    <p className="mt-1 text-2xl font-semibold">
+                      {resultSummary.simulations.toLocaleString()}
+                    </p>
+                  </div>
+                  <div className="rounded-2xl bg-white/10 p-4">
+                    <p className="text-sm text-white/70">Opponents</p>
+                    <p className="mt-1 text-2xl font-semibold">
+                      {resultSummary.opponents}
+                    </p>
                   </div>
                 </div>
                 <p className="mt-3 text-sm leading-6 text-white/72">
                   {simulationResult
-                    ? `Placeholder run complete for ${simulationResult.simulations.toLocaleString()} trials.`
+                    ? `Placeholder run complete for ${simulationResult.simulations.toLocaleString()} trials against ${simulationResult.opponents} opponent${simulationResult.opponents === 1 ? "" : "s"}.`
                     : "Run the placeholder engine to push current selections into the results panels below."}
                 </p>
               </div>
@@ -536,9 +613,12 @@ export default function Home() {
                 {holeCardsSelected}/2 hole cards, {boardCardsSelected}/5 board cards,{" "}
                 {remainingDeckCount} cards remaining in deck.
               </p>
-                <p className="mt-2 text-sm leading-6 text-muted-foreground">
-                  {statusMessage}
-                </p>
+              <p className="mt-2 text-sm leading-6 text-muted-foreground">
+                {statusMessage}
+              </p>
+              <p className="mt-2 text-sm leading-6 text-muted-foreground">
+                {scenarioSummary}
+              </p>
               <div className="mt-3 flex flex-wrap gap-2">
                 <Button variant="outline" size="sm" onClick={dealRandomSetup}>
                   Random setup
@@ -639,6 +719,19 @@ export default function Home() {
                 <p className="text-muted-foreground">
                   Selected cards are removed from the available deck and saved locally.
                 </p>
+              </div>
+
+              <div className="flex flex-wrap gap-2 rounded-2xl border border-border bg-[#fffdf8] p-4">
+                {SCENARIO_PRESETS.map((preset) => (
+                  <Button
+                    key={preset.label}
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setScenarioPreset(preset)}
+                  >
+                    {preset.label}
+                  </Button>
+                ))}
               </div>
 
               <div className="flex flex-col gap-3 rounded-2xl border border-border bg-[#fffdf8] p-4 sm:flex-row sm:items-center sm:justify-between">
@@ -795,7 +888,7 @@ export default function Home() {
             <CardHeader>
               <CardTitle>Simulation Controls</CardTitle>
               <CardDescription>
-                Controls are live now, with validation and quick presets.
+                Controls are live now, with validation, opponent count, and quick presets.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -808,6 +901,18 @@ export default function Home() {
                     onClick={() => setSimulationInput(String(preset))}
                   >
                     {preset.toLocaleString()}
+                  </Button>
+                ))}
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {OPPONENT_PRESETS.map((preset) => (
+                  <Button
+                    key={preset}
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setOpponentCount(preset)}
+                  >
+                    {preset} opponent{preset === 1 ? "" : "s"}
                   </Button>
                 ))}
               </div>
@@ -838,6 +943,45 @@ export default function Home() {
                   </Button>
                 </div>
               </div>
+              <div className="grid gap-4 sm:grid-cols-[1fr_auto_auto]">
+                <div className="space-y-2">
+                  <label
+                    htmlFor="opponents"
+                    className="text-sm font-medium text-foreground"
+                  >
+                    Number of opponents
+                  </label>
+                  <Input
+                    id="opponents"
+                    type="number"
+                    min="1"
+                    max="9"
+                    value={String(opponentCount)}
+                    onChange={(event) =>
+                      setOpponentCount(
+                        clampIndex(Number.parseInt(event.target.value || "1", 10) || 1, 9),
+                      )
+                    }
+                    placeholder="1"
+                  />
+                </div>
+                <div className="flex items-end">
+                  <Button
+                    variant="outline"
+                    onClick={() => setOpponentCount((current) => Math.max(1, current - 1))}
+                  >
+                    Fewer
+                  </Button>
+                </div>
+                <div className="flex items-end">
+                  <Button
+                    variant="outline"
+                    onClick={() => setOpponentCount((current) => Math.min(9, current + 1))}
+                  >
+                    More
+                  </Button>
+                </div>
+              </div>
               <div className="grid gap-3 sm:grid-cols-3">
                 <div className="rounded-2xl bg-muted/45 p-4 text-sm">
                   <p className="font-medium">Trials</p>
@@ -850,21 +994,21 @@ export default function Home() {
                 <div className="rounded-2xl bg-muted/45 p-4 text-sm">
                   <p className="font-medium">Board Street</p>
                   <p className="mt-1 text-muted-foreground">
-                    {boardCardsSelected === 0
-                      ? "Preflop"
-                      : boardCardsSelected <= 3
-                        ? "Flop"
-                        : boardCardsSelected === 4
-                          ? "Turn"
-                          : "River"}
+                    {boardStage}
                   </p>
                 </div>
                 <div className="rounded-2xl bg-muted/45 p-4 text-sm">
-                  <p className="font-medium">Run Readiness</p>
+                  <p className="font-medium">Opponent Count</p>
                   <p className="mt-1 text-muted-foreground">
-                    {canRunPlaceholder ? "Ready" : "Needs input"}
+                    {opponentCount}
                   </p>
                 </div>
+              </div>
+              <div className="rounded-2xl bg-muted/45 p-4 text-sm">
+                <p className="font-medium">Run Readiness</p>
+                <p className="mt-1 text-muted-foreground">
+                  {canRunPlaceholder ? "Ready to simulate" : "Needs input"}
+                </p>
               </div>
               <div className="rounded-2xl border border-border bg-[#fffdf8] p-4 text-sm leading-6 text-muted-foreground">
                 Current setup is saved automatically in your browser, including the
@@ -886,7 +1030,7 @@ export default function Home() {
                 Results Overview
               </CardTitle>
               <CardDescription>
-                Results now react to the current setup or the latest placeholder run.
+                Results now react to the current setup, board stage, and opponent count.
               </CardDescription>
             </CardHeader>
             <CardContent className="grid gap-4 sm:grid-cols-3">
@@ -902,6 +1046,32 @@ export default function Home() {
                   </p>
                 </div>
               ))}
+            </CardContent>
+          </Card>
+
+          <Card className="bg-white/78">
+            <CardHeader>
+              <CardTitle>Scenario Summary</CardTitle>
+              <CardDescription>
+                Quick readout of the current setup before real simulation logic arrives.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="grid gap-4 sm:grid-cols-2">
+              <div className="rounded-2xl border border-border bg-[#fffdf8] p-5">
+                <p className="text-sm text-muted-foreground">Spot</p>
+                <p className="mt-2 text-lg font-semibold">{boardStage}</p>
+                <p className="mt-2 text-sm text-muted-foreground">{scenarioSummary}</p>
+              </div>
+              <div className="rounded-2xl border border-border bg-[#fffdf8] p-5">
+                <p className="text-sm text-muted-foreground">Focus</p>
+                <p className="mt-2 text-lg font-semibold">
+                  {activePicker === "hole" ? "Hole cards" : "Community board"}
+                </p>
+                <p className="mt-2 text-sm text-muted-foreground">
+                  Editing {activeTargetLabel.toLowerCase()} with {remainingDeckCount} live
+                  cards left in the deck.
+                </p>
+              </div>
             </CardContent>
           </Card>
 
