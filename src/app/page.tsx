@@ -58,7 +58,7 @@ const handBreakdown = [
   ["Straight Flush", 0.6],
   ["Royal Flush", 0.1],
 ] as const;
-const boardCards = ["Q H", "J D", "10 C", "--", "--"];
+const BOARD_STREETS = ["Flop 1", "Flop 2", "Flop 3", "Turn", "River"] as const;
 
 function PlayingCard({
   value,
@@ -93,10 +93,18 @@ export default function Home() {
     null,
     null,
   ]);
+  const [selectedBoardCards, setSelectedBoardCards] = useState<(string | null)[]>(
+    [null, null, null, null, null],
+  );
   const [activeHoleSlot, setActiveHoleSlot] = useState(0);
+  const [activeBoardSlot, setActiveBoardSlot] = useState(0);
+  const [activePicker, setActivePicker] = useState<"hole" | "board">("hole");
 
   const nextEmptySlot = selectedHoleCards.findIndex((card) => card === null);
-  const usedCards = new Set(selectedHoleCards.filter(Boolean));
+  const nextEmptyBoardSlot = selectedBoardCards.findIndex((card) => card === null);
+  const usedCards = new Set(
+    [...selectedHoleCards, ...selectedBoardCards].filter(Boolean),
+  );
 
   function handleHoleCardSelect(cardId: string) {
     const shouldAdvanceSlot =
@@ -136,11 +144,60 @@ export default function Home() {
       currentCards.map((card, index) => (index === slotIndex ? null : card)),
     );
     setActiveHoleSlot(slotIndex);
+    setActivePicker("hole");
   }
 
   function clearAllHoleCards() {
     setSelectedHoleCards([null, null]);
     setActiveHoleSlot(0);
+    setActivePicker("hole");
+  }
+
+  function handleBoardCardSelect(cardId: string) {
+    const shouldAdvanceSlot =
+      selectedBoardCards[activeBoardSlot] === null && nextEmptyBoardSlot !== -1;
+
+    setSelectedBoardCards((currentCards) => {
+      if (currentCards.includes(cardId)) {
+        return currentCards;
+      }
+
+      const updatedCards = [...currentCards];
+      const targetSlot =
+        currentCards[activeBoardSlot] === null
+          ? activeBoardSlot
+          : currentCards.findIndex((card) => card === null);
+
+      if (targetSlot === -1) {
+        updatedCards[activeBoardSlot] = cardId;
+        return updatedCards;
+      }
+
+      updatedCards[targetSlot] = cardId;
+      return updatedCards;
+    });
+
+    setActiveBoardSlot((currentSlot) => {
+      if (shouldAdvanceSlot) {
+        return Math.min(currentSlot + 1, 4);
+      }
+
+      return currentSlot;
+    });
+  }
+
+  function clearBoardSlot(slotIndex: number) {
+    setSelectedBoardCards((currentCards) =>
+      currentCards.map((card, index) => (index === slotIndex ? null : card)),
+    );
+    setActiveBoardSlot(slotIndex);
+    setActivePicker("board");
+  }
+
+  function clearAllBoardCards() {
+    setSelectedBoardCards([null, null, null, null, null]);
+    setActiveBoardSlot(0);
+    setActivePicker("board");
   }
 
   return (
@@ -213,7 +270,7 @@ export default function Home() {
               Table Snapshot
             </CardTitle>
             <CardDescription>
-              Placeholder card layout for the upcoming interactive selector.
+              Hole cards and community cards reflect your active selections.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-5">
@@ -233,7 +290,10 @@ export default function Home() {
                     <button
                       key={`hole-${index}`}
                       type="button"
-                      onClick={() => setActiveHoleSlot(index)}
+                      onClick={() => {
+                        setActiveHoleSlot(index);
+                        setActivePicker("hole");
+                      }}
                       className={`rounded-[1.1rem] transition-transform hover:-translate-y-0.5 ${
                         activeHoleSlot === index ? "ring-2 ring-primary/35 ring-offset-2 ring-offset-transparent" : ""
                       }`}
@@ -251,15 +311,36 @@ export default function Home() {
             <div className="space-y-3">
               <div className="flex items-center justify-between">
                 <p className="text-sm font-medium">Community Board</p>
-                <button className="inline-flex items-center gap-1 text-xs font-medium text-primary">
-                  Street selector
+                <p className="inline-flex items-center gap-1 text-xs font-medium text-primary">
+                  Street-aware
                   <ChevronDown className="size-3.5" />
-                </button>
+                </p>
               </div>
               <div className="flex flex-wrap gap-3">
-                {boardCards.map((card) => (
-                  <PlayingCard key={card} value={card} />
-                ))}
+                {selectedBoardCards.map((cardId, index) => {
+                  const card = DECK.find((deckCard) => deckCard.id === cardId);
+                  const displayValue = card ? `${card.rank} ${card.symbol}` : "Empty";
+
+                  return (
+                    <button
+                      key={`board-${index}`}
+                      type="button"
+                      onClick={() => {
+                        setActiveBoardSlot(index);
+                        setActivePicker("board");
+                      }}
+                      className={`rounded-[1.1rem] transition-transform hover:-translate-y-0.5 ${
+                        activeBoardSlot === index ? "ring-2 ring-accent/35 ring-offset-2 ring-offset-transparent" : ""
+                      }`}
+                    >
+                      <PlayingCard
+                        value={displayValue}
+                        highlighted={Boolean(card)}
+                        accent={card?.tone}
+                      />
+                    </button>
+                  );
+                })}
               </div>
             </div>
           </CardContent>
@@ -297,7 +378,10 @@ export default function Home() {
                     <button
                       key={`selector-slot-${index}`}
                       type="button"
-                      onClick={() => setActiveHoleSlot(index)}
+                      onClick={() => {
+                        setActiveHoleSlot(index);
+                        setActivePicker("hole");
+                      }}
                       className={`rounded-2xl border p-4 text-left transition-colors ${
                         activeHoleSlot === index
                           ? "border-primary bg-primary/6"
@@ -338,7 +422,11 @@ export default function Home() {
                       key={card.id}
                       type="button"
                       disabled={isUsed}
-                      onClick={() => handleHoleCardSelect(card.id)}
+                      onClick={() =>
+                        activePicker === "hole"
+                          ? handleHoleCardSelect(card.id)
+                          : handleBoardCardSelect(card.id)
+                      }
                       className={`rounded-xl border px-2 py-3 text-center text-sm font-semibold transition-colors ${
                         isUsed
                           ? "cursor-not-allowed border-border bg-muted/45 text-muted-foreground line-through opacity-65"
@@ -351,11 +439,59 @@ export default function Home() {
                 })}
               </div>
 
-              <div className="rounded-2xl border border-dashed border-border bg-muted/35 p-4">
-                <p className="text-sm font-medium">Board card picker</p>
-                <p className="mt-2 text-sm leading-6 text-muted-foreground">
-                  Flop, turn, and river selection will come in the next step.
-                </p>
+              <div className="flex flex-col gap-3 rounded-2xl border border-border bg-[#fffdf8] p-4 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p className="text-sm font-medium">Board card picker</p>
+                  <p className="mt-1 text-sm leading-6 text-muted-foreground">
+                    Choose flop, turn, and river cards from the same deck.
+                  </p>
+                </div>
+                <Button variant="outline" onClick={clearAllBoardCards}>
+                  Clear board
+                </Button>
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+                {selectedBoardCards.map((cardId, index) => {
+                  const card = DECK.find((deckCard) => deckCard.id === cardId);
+
+                  return (
+                    <button
+                      key={`board-slot-${index}`}
+                      type="button"
+                      onClick={() => {
+                        setActiveBoardSlot(index);
+                        setActivePicker("board");
+                      }}
+                      className={`rounded-2xl border p-4 text-left transition-colors ${
+                        activeBoardSlot === index
+                          ? "border-accent bg-accent/8"
+                          : "border-border bg-muted/20 hover:bg-muted/35"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-4">
+                        <div>
+                          <p className="text-sm font-medium">{BOARD_STREETS[index]}</p>
+                          <p className="mt-1 text-sm text-muted-foreground">
+                            {card ? card.label : "Choose a card"}
+                          </p>
+                        </div>
+                        {cardId ? (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              clearBoardSlot(index);
+                            }}
+                          >
+                            Clear
+                          </Button>
+                        ) : null}
+                      </div>
+                    </button>
+                  );
+                })}
               </div>
             </CardContent>
           </Card>
