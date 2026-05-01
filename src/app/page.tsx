@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import {
   ArrowRight,
@@ -42,6 +42,11 @@ const DECK = RANKS.flatMap((rank) =>
 
 const BOARD_STREETS = ["Flop 1", "Flop 2", "Flop 3", "Turn", "River"] as const;
 const SIMULATION_PRESETS = [5000, 25000, 100000] as const;
+const STREET_PRESETS = [
+  { label: "Deal Flop", count: 3 },
+  { label: "Deal Turn", count: 4 },
+  { label: "Deal River", count: 5 },
+] as const;
 const HAND_LABELS = [
   "High Card",
   "Pair",
@@ -63,8 +68,54 @@ type SimulationSnapshot = {
   simulations: number;
 };
 
+type PersistedState = {
+  selectedHoleCards: (string | null)[];
+  selectedBoardCards: (string | null)[];
+  activeHoleSlot: number;
+  activeBoardSlot: number;
+  activePicker: "hole" | "board";
+  simulationInput: string;
+  simulationResult: SimulationSnapshot | null;
+};
+
+const STORAGE_KEY = "poker-simulator-ui-state";
+
 function formatPercent(value: number) {
   return `${value.toFixed(1)}%`;
+}
+
+function clampIndex(index: number, max: number) {
+  return Math.min(Math.max(index, 0), max);
+}
+
+function shuffleCards(cardIds: string[]) {
+  const shuffled = [...cardIds];
+
+  for (let index = shuffled.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(Math.random() * (index + 1));
+    [shuffled[index], shuffled[swapIndex]] = [shuffled[swapIndex], shuffled[index]];
+  }
+
+  return shuffled;
+}
+
+function loadPersistedState(): PersistedState | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  const storedState = window.localStorage.getItem(STORAGE_KEY);
+
+  if (!storedState) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(storedState) as PersistedState;
+  } catch {
+    window.localStorage.removeItem(STORAGE_KEY);
+    return null;
+  }
 }
 
 function generatePlaceholderResults(
@@ -142,20 +193,59 @@ function PlayingCard({
 }
 
 export default function Home() {
-  const [selectedHoleCards, setSelectedHoleCards] = useState<(string | null)[]>([
-    null,
-    null,
-  ]);
+  const persistedState = loadPersistedState();
+  const [selectedHoleCards, setSelectedHoleCards] = useState<(string | null)[]>(
+    () => [
+      persistedState?.selectedHoleCards?.[0] ?? null,
+      persistedState?.selectedHoleCards?.[1] ?? null,
+    ],
+  );
   const [selectedBoardCards, setSelectedBoardCards] = useState<(string | null)[]>(
-    [null, null, null, null, null],
+    () => [
+      persistedState?.selectedBoardCards?.[0] ?? null,
+      persistedState?.selectedBoardCards?.[1] ?? null,
+      persistedState?.selectedBoardCards?.[2] ?? null,
+      persistedState?.selectedBoardCards?.[3] ?? null,
+      persistedState?.selectedBoardCards?.[4] ?? null,
+    ],
   );
-  const [activeHoleSlot, setActiveHoleSlot] = useState(0);
-  const [activeBoardSlot, setActiveBoardSlot] = useState(0);
-  const [activePicker, setActivePicker] = useState<"hole" | "board">("hole");
-  const [simulationInput, setSimulationInput] = useState("25000");
+  const [activeHoleSlot, setActiveHoleSlot] = useState(() =>
+    clampIndex(persistedState?.activeHoleSlot ?? 0, 1),
+  );
+  const [activeBoardSlot, setActiveBoardSlot] = useState(() =>
+    clampIndex(persistedState?.activeBoardSlot ?? 0, 4),
+  );
+  const [activePicker, setActivePicker] = useState<"hole" | "board">(
+    persistedState?.activePicker === "board" ? "board" : "hole",
+  );
+  const [simulationInput, setSimulationInput] = useState(
+    persistedState?.simulationInput ?? "25000",
+  );
   const [simulationResult, setSimulationResult] = useState<SimulationSnapshot | null>(
-    null,
+    persistedState?.simulationResult ?? null,
   );
+
+  useEffect(() => {
+    const persistedState: PersistedState = {
+      selectedHoleCards,
+      selectedBoardCards,
+      activeHoleSlot,
+      activeBoardSlot,
+      activePicker,
+      simulationInput,
+      simulationResult,
+    };
+
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(persistedState));
+  }, [
+    activeBoardSlot,
+    activeHoleSlot,
+    activePicker,
+    selectedBoardCards,
+    selectedHoleCards,
+    simulationInput,
+    simulationResult,
+  ]);
 
   const nextEmptySlot = selectedHoleCards.findIndex((card) => card === null);
   const nextEmptyBoardSlot = selectedBoardCards.findIndex((card) => card === null);
@@ -249,6 +339,7 @@ export default function Home() {
     setSelectedHoleCards([null, null]);
     setActiveHoleSlot(0);
     setActivePicker("hole");
+    setSimulationResult(null);
   }
 
   function handleBoardCardSelect(cardId: string) {
@@ -296,6 +387,51 @@ export default function Home() {
     setSelectedBoardCards([null, null, null, null, null]);
     setActiveBoardSlot(0);
     setActivePicker("board");
+    setSimulationResult(null);
+  }
+
+  function resetTable() {
+    setSelectedHoleCards([null, null]);
+    setSelectedBoardCards([null, null, null, null, null]);
+    setActiveHoleSlot(0);
+    setActiveBoardSlot(0);
+    setActivePicker("hole");
+    setSimulationInput("25000");
+    setSimulationResult(null);
+  }
+
+  function dealRandomSetup() {
+    const shuffledDeck = shuffleCards(DECK.map((card) => card.id));
+
+    setSelectedHoleCards(shuffledDeck.slice(0, 2));
+    setSelectedBoardCards(shuffledDeck.slice(2, 7));
+    setActiveHoleSlot(0);
+    setActiveBoardSlot(4);
+    setActivePicker("board");
+    setSimulationResult(null);
+  }
+
+  function dealBoardThrough(targetCount: number) {
+    const availableCards = shuffleCards(
+      DECK.map((card) => card.id).filter((cardId) => !usedCards.has(cardId)),
+    );
+
+    const nextBoardCards = [...selectedBoardCards];
+    let deckIndex = 0;
+
+    for (let index = 0; index < targetCount; index += 1) {
+      if (nextBoardCards[index] !== null) {
+        continue;
+      }
+
+      nextBoardCards[index] = availableCards[deckIndex] ?? null;
+      deckIndex += 1;
+    }
+
+    setSelectedBoardCards(nextBoardCards);
+    setActiveBoardSlot(clampIndex(targetCount - 1, 4));
+    setActivePicker("board");
+    setSimulationResult(null);
   }
 
   function runPlaceholderSimulation() {
@@ -345,9 +481,9 @@ export default function Home() {
                     variant="outline"
                     size="lg"
                     className="border-white/20 bg-white/10 text-white hover:bg-white/16"
-                    onClick={() => setActivePicker("board")}
+                    onClick={dealRandomSetup}
                   >
-                    Configure Board
+                    Deal Random Table
                   </Button>
                 </div>
               </div>
@@ -400,9 +536,17 @@ export default function Home() {
                 {holeCardsSelected}/2 hole cards, {boardCardsSelected}/5 board cards,{" "}
                 {remainingDeckCount} cards remaining in deck.
               </p>
-              <p className="mt-2 text-sm leading-6 text-muted-foreground">
-                {statusMessage}
-              </p>
+                <p className="mt-2 text-sm leading-6 text-muted-foreground">
+                  {statusMessage}
+                </p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <Button variant="outline" size="sm" onClick={dealRandomSetup}>
+                  Random setup
+                </Button>
+                <Button variant="outline" size="sm" onClick={resetTable}>
+                  Reset table
+                </Button>
+              </div>
             </div>
             <div className="space-y-3">
               <div className="flex items-center justify-between">
@@ -493,7 +637,7 @@ export default function Home() {
                   Active picker: <span className="text-primary">{activeTargetLabel}</span>
                 </p>
                 <p className="text-muted-foreground">
-                  Selected cards are removed from the available deck.
+                  Selected cards are removed from the available deck and saved locally.
                 </p>
               </div>
 
@@ -585,9 +729,21 @@ export default function Home() {
                     Choose flop, turn, and river cards from the same deck.
                   </p>
                 </div>
-                <Button variant="outline" onClick={clearAllBoardCards}>
-                  Clear board
-                </Button>
+                <div className="flex flex-wrap gap-2">
+                  <Button variant="outline" onClick={clearAllBoardCards}>
+                    Clear board
+                  </Button>
+                  {STREET_PRESETS.map((preset) => (
+                    <Button
+                      key={preset.label}
+                      variant="outline"
+                      size="sm"
+                      onClick={() => dealBoardThrough(preset.count)}
+                    >
+                      {preset.label}
+                    </Button>
+                  ))}
+                </div>
               </div>
 
               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
@@ -709,6 +865,10 @@ export default function Home() {
                     {canRunPlaceholder ? "Ready" : "Needs input"}
                   </p>
                 </div>
+              </div>
+              <div className="rounded-2xl border border-border bg-[#fffdf8] p-4 text-sm leading-6 text-muted-foreground">
+                Current setup is saved automatically in your browser, including the
+                latest placeholder result snapshot.
               </div>
               <div className="rounded-2xl bg-muted/45 p-4 text-sm leading-6 text-muted-foreground">
                 Placeholder simulation mode is active. Real Monte Carlo logic
