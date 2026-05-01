@@ -20,6 +20,11 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import {
+  HAND_LABELS,
+  runMonteCarloSimulation,
+  type MonteCarloResult,
+} from "@/lib/poker";
 
 const RANKS = ["A", "K", "Q", "J", "10", "9", "8", "7", "6", "5", "4", "3", "2"];
 const SUITS = [
@@ -71,28 +76,6 @@ const SCENARIO_PRESETS = [
     activeBoardSlot: 3,
   },
 ] as const;
-const HAND_LABELS = [
-  "High Card",
-  "Pair",
-  "Two Pair",
-  "Trips",
-  "Straight",
-  "Flush",
-  "Full House",
-  "Quads",
-  "Straight Flush",
-  "Royal Flush",
-] as const;
-
-type SimulationSnapshot = {
-  win: number;
-  lose: number;
-  tie: number;
-  handBreakdown: number[];
-  simulations: number;
-  opponents: number;
-};
-
 type PersistedState = {
   selectedHoleCards: (string | null)[];
   selectedBoardCards: (string | null)[];
@@ -101,7 +84,7 @@ type PersistedState = {
   activePicker: "hole" | "board";
   opponentCount: number;
   simulationInput: string;
-  simulationResult: SimulationSnapshot | null;
+  simulationResult: MonteCarloResult | null;
 };
 
 const STORAGE_KEY = "poker-simulator-ui-state";
@@ -142,56 +125,6 @@ function loadPersistedState(): PersistedState | null {
     window.localStorage.removeItem(STORAGE_KEY);
     return null;
   }
-}
-
-function generatePlaceholderResults(
-  holeCards: (string | null)[],
-  boardCards: (string | null)[],
-  simulationCount: number,
-  opponentCount: number,
-): SimulationSnapshot {
-  const seedSource = [...holeCards, ...boardCards].filter(Boolean).join("-");
-  let seed = simulationCount + opponentCount * 31;
-
-  for (const char of seedSource) {
-    seed += char.charCodeAt(0) * 17;
-  }
-
-  const boardCardsSelected = boardCards.filter(Boolean).length;
-  const baseWin = 58 - opponentCount * 4 + boardCardsSelected * 2;
-  const win = Math.min(78, Math.max(12, baseWin + (seed % 11) - 5));
-  const tie = Math.min(12, Math.max(1, 1 + boardCardsSelected + (Math.floor(seed / 7) % 4)));
-  const lose = Math.max(0.5, Number((100 - win - tie).toFixed(1)));
-
-  const rawBreakdown = HAND_LABELS.map((_, index) => {
-    if (index === HAND_LABELS.length - 1) {
-      return (seed % 3) + 1;
-    }
-
-    return ((seed + index * 19) % 100) + 12;
-  });
-
-  const rawTotal = rawBreakdown.reduce((sum, value) => sum + value, 0);
-  const handBreakdown = rawBreakdown.map((value, index) => {
-    if (index === rawBreakdown.length - 1) {
-      const runningTotal = rawBreakdown
-        .slice(0, -1)
-        .reduce((sum, item) => sum + (item / rawTotal) * 100, 0);
-
-      return Number(Math.max(0.1, 100 - runningTotal).toFixed(1));
-    }
-
-    return Number(((value / rawTotal) * 100).toFixed(1));
-  });
-
-  return {
-    win,
-    lose,
-    tie,
-    handBreakdown,
-    simulations: simulationCount,
-    opponents: opponentCount,
-  };
 }
 
 function PlayingCard({
@@ -254,9 +187,10 @@ export default function Home() {
   const [simulationInput, setSimulationInput] = useState(
     persistedState?.simulationInput ?? "25000",
   );
-  const [simulationResult, setSimulationResult] = useState<SimulationSnapshot | null>(
+  const [simulationResult, setSimulationResult] = useState<MonteCarloResult | null>(
     persistedState?.simulationResult ?? null,
   );
+  const [isRunningSimulation, setIsRunningSimulation] = useState(false);
 
   useEffect(() => {
     const persistedState: PersistedState = {
@@ -333,13 +267,15 @@ export default function Home() {
           ? "Enter a simulation count between 1,000 and 500,000."
           : "Selections look valid. You can run a placeholder simulation now.";
   const resultSummary =
-    simulationResult ??
-    generatePlaceholderResults(
-      selectedHoleCards,
-      selectedBoardCards,
-      isSimulationCountValid ? parsedSimulationCount : 25000,
-      isOpponentCountValid ? opponentCount : 1,
-    );
+    simulationResult ?? {
+      win: 0,
+      lose: 0,
+      tie: 0,
+      handBreakdown: HAND_LABELS.map(() => 0),
+      simulations: isSimulationCountValid ? parsedSimulationCount : 0,
+      opponents: isOpponentCountValid ? opponentCount : 0,
+      elapsedMs: 0,
+    };
   const outcomeStats = [
     { label: "Win", value: formatPercent(resultSummary.win), tone: "bg-primary" },
     { label: "Lose", value: formatPercent(resultSummary.lose), tone: "bg-secondary" },
@@ -350,9 +286,7 @@ export default function Home() {
     resultSummary.handBreakdown[index],
   ] as const);
 
-  function setScenarioPreset(
-    preset: (typeof SCENARIO_PRESETS)[number],
-  ) {
+  function setScenarioPreset(preset: (typeof SCENARIO_PRESETS)[number]) {
     setSelectedHoleCards([...preset.holeCards]);
     setSelectedBoardCards([...preset.boardCards]);
     setActiveHoleSlot(0);
@@ -503,18 +437,27 @@ export default function Home() {
   }
 
   function runPlaceholderSimulation() {
-    if (!canRunPlaceholder) {
+    if (!canRunPlaceholder || isRunningSimulation) {
       return;
     }
 
-    setSimulationResult(
-      generatePlaceholderResults(
-        selectedHoleCards,
-        selectedBoardCards,
-        parsedSimulationCount,
-        opponentCount,
-      ),
-    );
+    setIsRunningSimulation(true);
+
+    window.setTimeout(() => {
+      const result = runMonteCarloSimulation({
+        heroHoleCards: selectedHoleCards.filter(
+          (cardId): cardId is string => cardId !== null,
+        ),
+        boardCards: selectedBoardCards.filter(
+          (cardId): cardId is string => cardId !== null,
+        ),
+        simulations: parsedSimulationCount,
+        opponents: opponentCount,
+      });
+
+      setSimulationResult(result);
+      setIsRunningSimulation(false);
+    }, 0);
   }
 
   return (
@@ -541,9 +484,9 @@ export default function Home() {
                     size="lg"
                     className="bg-white text-secondary hover:bg-white/92"
                     onClick={runPlaceholderSimulation}
-                    disabled={!canRunPlaceholder}
+                    disabled={!canRunPlaceholder || isRunningSimulation}
                   >
-                    Run Placeholder Trial
+                    {isRunningSimulation ? "Running Simulation..." : "Run Simulation"}
                     <ArrowRight className="ml-2 size-4" />
                   </Button>
                   <Button
@@ -587,9 +530,11 @@ export default function Home() {
                   </div>
                 </div>
                 <p className="mt-3 text-sm leading-6 text-white/72">
-                  {simulationResult
-                    ? `Placeholder run complete for ${simulationResult.simulations.toLocaleString()} trials against ${simulationResult.opponents} opponent${simulationResult.opponents === 1 ? "" : "s"}.`
-                    : "Run the placeholder engine to push current selections into the results panels below."}
+                  {isRunningSimulation
+                    ? "Monte Carlo simulation is running for the current setup."
+                    : simulationResult
+                      ? `Simulation complete for ${simulationResult.simulations.toLocaleString()} trials against ${simulationResult.opponents} opponent${simulationResult.opponents === 1 ? "" : "s"} in ${simulationResult.elapsedMs} ms.`
+                      : "Run a simulation to generate real win, lose, tie, and hand-distribution results."}
                 </p>
               </div>
             </div>
@@ -708,7 +653,7 @@ export default function Home() {
               <CardTitle>Card Selector</CardTitle>
               <CardDescription>
                 The shared deck now feeds hole cards, board cards, and the
-                placeholder simulation state.
+                live simulation state.
               </CardDescription>
             </CardHeader>
             <CardContent className="grid gap-4">
@@ -937,9 +882,9 @@ export default function Home() {
                     size="lg"
                     className="w-full sm:w-auto"
                     onClick={runPlaceholderSimulation}
-                    disabled={!canRunPlaceholder}
+                    disabled={!canRunPlaceholder || isRunningSimulation}
                   >
-                    Simulate Hands
+                    {isRunningSimulation ? "Simulating..." : "Simulate Hands"}
                   </Button>
                 </div>
               </div>
@@ -1012,11 +957,11 @@ export default function Home() {
               </div>
               <div className="rounded-2xl border border-border bg-[#fffdf8] p-4 text-sm leading-6 text-muted-foreground">
                 Current setup is saved automatically in your browser, including the
-                latest placeholder result snapshot.
+                latest simulation snapshot.
               </div>
               <div className="rounded-2xl bg-muted/45 p-4 text-sm leading-6 text-muted-foreground">
-                Placeholder simulation mode is active. Real Monte Carlo logic
-                will replace these generated values in a later commit.
+                Results now come from an in-browser Monte Carlo simulation using your
+                current cards, board state, and opponent count.
               </div>
             </CardContent>
           </Card>
@@ -1042,7 +987,7 @@ export default function Home() {
                   <p className="text-sm text-muted-foreground">{stat.label}</p>
                   <p className="mt-2 text-3xl font-semibold">{stat.value}</p>
                   <p className="mt-2 text-sm text-muted-foreground">
-                    {simulationResult ? "Latest placeholder run" : "Live preview"}
+                    {simulationResult ? "Latest simulation" : "Awaiting run"}
                   </p>
                 </div>
               ))}
@@ -1053,7 +998,7 @@ export default function Home() {
             <CardHeader>
               <CardTitle>Scenario Summary</CardTitle>
               <CardDescription>
-                Quick readout of the current setup before real simulation logic arrives.
+                Quick readout of the current setup and latest simulation context.
               </CardDescription>
             </CardHeader>
             <CardContent className="grid gap-4 sm:grid-cols-2">
@@ -1083,7 +1028,7 @@ export default function Home() {
                   Hand Type Breakdown
                 </CardTitle>
                 <CardDescription>
-                  Placeholder final-hand distribution based on current state.
+                  Hero final-hand distribution across completed simulation trials.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
@@ -1111,8 +1056,7 @@ export default function Home() {
                   Charts
                 </CardTitle>
                 <CardDescription>
-                  Reserved for richer visualizations once simulation data is
-                  wired in.
+                  Visual summaries generated from the latest simulation run.
                 </CardDescription>
               </CardHeader>
               <CardContent className="grid gap-4 sm:grid-cols-2">
