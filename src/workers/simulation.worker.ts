@@ -12,6 +12,7 @@ type SimulationWorkerRequest = {
   heroHoleCards: string[];
   boardCards: string[];
   opponents: number;
+  knownOpponentHoleCards: string[][];
   simulations: number;
 };
 
@@ -47,7 +48,13 @@ self.onmessage = (event: MessageEvent<SimulationWorkerRequest>) => {
   }
 
   try {
-    const { heroHoleCards, boardCards, opponents, simulations } = event.data;
+    const {
+      heroHoleCards,
+      boardCards,
+      opponents,
+      knownOpponentHoleCards,
+      simulations,
+    } = event.data;
     const accumulator = createMonteCarloAccumulator();
     const startedAt = performance.now();
     let completedSimulations = 0;
@@ -62,6 +69,7 @@ self.onmessage = (event: MessageEvent<SimulationWorkerRequest>) => {
         heroHoleCards,
         boardCards,
         opponents,
+        knownOpponentHoleCards,
         simulations: batchSize,
         accumulator,
       });

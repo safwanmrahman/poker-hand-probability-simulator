@@ -58,6 +58,8 @@ export type MonteCarloAccumulator = {
   handBreakdownCounts: number[];
 };
 
+export type OpponentSeatCards = string[];
+
 function parseCard(cardId: string): ParsedCard {
   const suit = cardId.slice(-1);
   const rankText = cardId.slice(0, -1);
@@ -112,7 +114,7 @@ function findStraight(ranks: number[]) {
   return null;
 }
 
-function evaluateSevenCardHand(cardIds: string[]): HandScore {
+export function evaluateSevenCardHand(cardIds: string[]): HandScore {
   const cards = cardIds.map(parseCard);
   const rankCounts = new Map<number, number>();
   const suitGroups = new Map<string, number[]>();
@@ -279,16 +281,37 @@ export function runMonteCarloBatch(options: {
   heroHoleCards: string[];
   boardCards: string[];
   opponents: number;
+  knownOpponentHoleCards?: OpponentSeatCards[];
   simulations: number;
   accumulator: MonteCarloAccumulator;
 }) {
-  const { heroHoleCards, boardCards, opponents, simulations, accumulator } = options;
-  const usedCards = new Set([...heroHoleCards, ...boardCards]);
+  const {
+    heroHoleCards,
+    boardCards,
+    opponents,
+    knownOpponentHoleCards = [],
+    simulations,
+    accumulator,
+  } = options;
+  const usedCards = new Set([
+    ...heroHoleCards,
+    ...boardCards,
+    ...knownOpponentHoleCards.flat(),
+  ]);
   const availableDeck = Object.keys(RANK_VALUES)
     .flatMap((rank) => ["S", "H", "D", "C"].map((suit) => `${rank}${suit}`))
     .filter((cardId) => !usedCards.has(cardId));
   const boardCardsNeeded = 5 - boardCards.length;
-  const cardsNeededPerTrial = boardCardsNeeded + opponents * 2;
+  const cardsNeededPerTrial =
+    boardCardsNeeded +
+    knownOpponentHoleCards
+      .slice(0, opponents)
+      .reduce((total, cards) => total + Math.max(2 - cards.length, 0), 0) +
+    Math.max(opponents - knownOpponentHoleCards.length, 0) * 2;
+
+  if (cardsNeededPerTrial > availableDeck.length) {
+    throw new Error("Not enough cards remain in the deck for this table setup.");
+  }
 
   for (let trial = 0; trial < simulations; trial += 1) {
     const draw = drawRandomCards(availableDeck, cardsNeededPerTrial);
@@ -300,10 +323,16 @@ export function runMonteCarloBatch(options: {
     accumulator.handBreakdownCounts[heroHandIndex] += 1;
 
     let comparison = 1;
+    let drawIndex = boardCardsNeeded;
 
     for (let opponentIndex = 0; opponentIndex < opponents; opponentIndex += 1) {
-      const start = boardCardsNeeded + opponentIndex * 2;
-      const opponentHoleCards = draw.slice(start, start + 2);
+      const lockedCards = knownOpponentHoleCards[opponentIndex] ?? [];
+      const drawnCardsNeeded = Math.max(2 - lockedCards.length, 0);
+      const opponentHoleCards = [
+        ...lockedCards,
+        ...draw.slice(drawIndex, drawIndex + drawnCardsNeeded),
+      ];
+      drawIndex += drawnCardsNeeded;
       const opponentScore = evaluateSevenCardHand([
         ...opponentHoleCards,
         ...simulatedBoard,

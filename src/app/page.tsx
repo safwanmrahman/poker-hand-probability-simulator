@@ -1,15 +1,15 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import dynamic from "next/dynamic";
 
 import {
   ArrowRight,
-  BarChart3,
   CheckCircle2,
-  ChartColumnIncreasing,
-  Dices,
+  CircleOff,
+  Download,
+  GitCompareArrows,
   History,
-  LoaderCircle,
   MoonStar,
   Play,
   RotateCcw,
@@ -17,6 +17,7 @@ import {
   Sparkles,
   SunMedium,
   TrendingUp,
+  Users,
   WandSparkles,
 } from "lucide-react";
 
@@ -29,8 +30,33 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { buildRunHistoryCsv } from "@/lib/history";
 import { HAND_LABELS, type MonteCarloResult } from "@/lib/poker";
 import { cn } from "@/lib/utils";
+
+const ResultsCharts = dynamic(
+  () => import("@/components/results-charts").then((module) => module.ResultsCharts),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="grid gap-6 xl:grid-cols-[0.85fr_1.15fr]">
+        {["Outcome Chart", "Comparison Chart", "Hand Breakdown"].map((label, index) => (
+          <div
+            key={label}
+            className={
+              index === 2
+                ? "rounded-[1.75rem] border border-border bg-card/88 p-5 xl:col-span-2"
+                : "rounded-[1.75rem] border border-border bg-card/88 p-5"
+            }
+          >
+            <h3 className="text-base font-semibold">{label}</h3>
+            <div className="mt-4 h-72 rounded-2xl bg-muted/60" />
+          </div>
+        ))}
+      </div>
+    ),
+  },
+);
 
 const RANKS = ["A", "K", "Q", "J", "10", "9", "8", "7", "6", "5", "4", "3", "2"];
 const SUITS = [
@@ -64,47 +90,58 @@ const SCENARIO_PRESETS = [
     label: "Pocket Aces",
     holeCards: ["AS", "AH"],
     boardCards: [null, null, null, null, null],
-    activePicker: "board" as const,
-    activeBoardSlot: 0,
     opponentCount: 3,
   },
   {
     label: "Big Slick Draw",
     holeCards: ["AS", "KS"],
     boardCards: ["QS", "JD", "2S", null, null],
-    activePicker: "board" as const,
-    activeBoardSlot: 3,
     opponentCount: 2,
   },
   {
     label: "Set on Flop",
     holeCards: ["9C", "9D"],
     boardCards: ["9H", "KS", "2D", null, null],
-    activePicker: "board" as const,
-    activeBoardSlot: 3,
     opponentCount: 4,
   },
 ] as const;
 
 type ThemeMode = "light" | "dark";
+type OpponentMode = "random" | "known";
+
+type OpponentSeat = {
+  mode: OpponentMode;
+  cards: (string | null)[];
+};
+
+type ActiveTarget =
+  | { area: "hole"; slot: number }
+  | { area: "board"; slot: number }
+  | { area: "opponent"; seat: number; slot: number };
 
 type RunHistoryEntry = {
   id: string;
   createdAt: string;
   summary: string;
   result: MonteCarloResult;
+  setup: {
+    selectedHoleCards: string[];
+    selectedBoardCards: string[];
+    opponentCount: number;
+    opponentSeats: OpponentSeat[];
+  };
 };
 
 type PersistedState = {
   selectedHoleCards: (string | null)[];
   selectedBoardCards: (string | null)[];
-  activeHoleSlot: number;
-  activeBoardSlot: number;
-  activePicker: "hole" | "board";
+  activeTarget: ActiveTarget;
   opponentCount: number;
+  opponentSeats: OpponentSeat[];
   simulationInput: string;
   simulationResult: MonteCarloResult | null;
   runHistory: RunHistoryEntry[];
+  comparisonRunId: string | null;
 };
 
 type SimulationWorkerMessage =
@@ -126,6 +163,13 @@ type SimulationWorkerMessage =
 const STORAGE_KEY = "poker-simulator-ui-state";
 const THEME_STORAGE_KEY = "poker-simulator-theme";
 
+function createDefaultOpponentSeats() {
+  return Array.from({ length: 9 }, () => ({
+    mode: "random" as OpponentMode,
+    cards: [null, null],
+  }));
+}
+
 function formatPercent(value: number) {
   return `${value.toFixed(1)}%`;
 }
@@ -145,6 +189,13 @@ function shuffleCards(cardIds: string[]) {
   return shuffled;
 }
 
+function normalizeSeat(seat: Partial<OpponentSeat> | undefined): OpponentSeat {
+  return {
+    mode: seat?.mode === "known" ? "known" : "random",
+    cards: [seat?.cards?.[0] ?? null, seat?.cards?.[1] ?? null],
+  };
+}
+
 function loadPersistedState(): PersistedState | null {
   if (typeof window === "undefined") {
     return null;
@@ -157,7 +208,30 @@ function loadPersistedState(): PersistedState | null {
   }
 
   try {
-    return JSON.parse(storedState) as PersistedState;
+    const parsedState = JSON.parse(storedState) as Partial<PersistedState>;
+
+    return {
+      selectedHoleCards: [
+        parsedState.selectedHoleCards?.[0] ?? null,
+        parsedState.selectedHoleCards?.[1] ?? null,
+      ],
+      selectedBoardCards: [
+        parsedState.selectedBoardCards?.[0] ?? null,
+        parsedState.selectedBoardCards?.[1] ?? null,
+        parsedState.selectedBoardCards?.[2] ?? null,
+        parsedState.selectedBoardCards?.[3] ?? null,
+        parsedState.selectedBoardCards?.[4] ?? null,
+      ],
+      activeTarget: parsedState.activeTarget ?? { area: "hole", slot: 0 },
+      opponentCount: clampIndex(parsedState.opponentCount ?? 1, 9) || 1,
+      opponentSeats: Array.from({ length: 9 }, (_, index) =>
+        normalizeSeat(parsedState.opponentSeats?.[index]),
+      ),
+      simulationInput: parsedState.simulationInput ?? "25000",
+      simulationResult: parsedState.simulationResult ?? null,
+      runHistory: parsedState.runHistory ?? [],
+      comparisonRunId: parsedState.comparisonRunId ?? null,
+    };
   } catch {
     window.localStorage.removeItem(STORAGE_KEY);
     return null;
@@ -169,9 +243,9 @@ function loadThemeMode(): ThemeMode {
     return "light";
   }
 
-  const savedTheme = window.localStorage.getItem(THEME_STORAGE_KEY);
-
-  return savedTheme === "dark" ? "dark" : "light";
+  return window.localStorage.getItem(THEME_STORAGE_KEY) === "dark"
+    ? "dark"
+    : "light";
 }
 
 function formatCards(cardIds: (string | null)[]) {
@@ -189,6 +263,42 @@ function getTopHandLabels(handBreakdown: number[]) {
 
 function getCardDetails(cardId: string | null) {
   return DECK.find((card) => card.id === cardId) ?? null;
+}
+
+function getUsedCards(
+  selectedHoleCards: (string | null)[],
+  selectedBoardCards: (string | null)[],
+  opponentSeats: OpponentSeat[],
+  opponentCount: number,
+) {
+  return new Set(
+    [
+      ...selectedHoleCards,
+      ...selectedBoardCards,
+      ...opponentSeats
+        .slice(0, opponentCount)
+        .flatMap((seat) => (seat.mode === "known" ? seat.cards : [])),
+    ].filter(Boolean),
+  );
+}
+
+function getKnownSeatCount(opponentSeats: OpponentSeat[], opponentCount: number) {
+  return opponentSeats
+    .slice(0, opponentCount)
+    .filter((seat) => seat.mode === "known")
+    .length;
+}
+
+function downloadTextFile(fileName: string, contents: string, contentType: string) {
+  const blob = new Blob([contents], { type: contentType });
+  const objectUrl = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+
+  anchor.href = objectUrl;
+  anchor.download = fileName;
+  anchor.click();
+
+  URL.revokeObjectURL(objectUrl);
 }
 
 function PlayingCard({
@@ -265,7 +375,7 @@ function StatCard({
           : "border-stone-200 bg-white shadow-[0_16px_40px_-28px_rgba(29,20,12,0.18)]",
       )}
     >
-      <div className={`mb-3 h-2 rounded-full ${tone}`} />
+      <div className={cn("mb-3 h-2 rounded-full", tone)} />
       <p className={cn("text-sm", isDarkMode ? "text-muted-foreground" : "text-stone-700")}>
         {label}
       </p>
@@ -294,13 +404,18 @@ export default function Home() {
   const [selectedBoardCards, setSelectedBoardCards] = useState<(string | null)[]>(
     [null, null, null, null, null],
   );
-  const [activeHoleSlot, setActiveHoleSlot] = useState(0);
-  const [activeBoardSlot, setActiveBoardSlot] = useState(0);
-  const [activePicker, setActivePicker] = useState<"hole" | "board">("hole");
+  const [activeTarget, setActiveTarget] = useState<ActiveTarget>({
+    area: "hole",
+    slot: 0,
+  });
   const [opponentCount, setOpponentCount] = useState(1);
+  const [opponentSeats, setOpponentSeats] = useState<OpponentSeat[]>(
+    createDefaultOpponentSeats(),
+  );
   const [simulationInput, setSimulationInput] = useState("25000");
   const [simulationResult, setSimulationResult] = useState<MonteCarloResult | null>(null);
   const [runHistory, setRunHistory] = useState<RunHistoryEntry[]>([]);
+  const [comparisonRunId, setComparisonRunId] = useState<string | null>(null);
   const [isRunningSimulation, setIsRunningSimulation] = useState(false);
   const [simulationProgress, setSimulationProgress] = useState(0);
   const [completedSimulations, setCompletedSimulations] = useState(0);
@@ -314,26 +429,15 @@ export default function Home() {
       const persistedState = loadPersistedState();
 
       if (persistedState) {
-        setSelectedHoleCards([
-          persistedState.selectedHoleCards?.[0] ?? null,
-          persistedState.selectedHoleCards?.[1] ?? null,
-        ]);
-        setSelectedBoardCards([
-          persistedState.selectedBoardCards?.[0] ?? null,
-          persistedState.selectedBoardCards?.[1] ?? null,
-          persistedState.selectedBoardCards?.[2] ?? null,
-          persistedState.selectedBoardCards?.[3] ?? null,
-          persistedState.selectedBoardCards?.[4] ?? null,
-        ]);
-        setActiveHoleSlot(clampIndex(persistedState.activeHoleSlot ?? 0, 1));
-        setActiveBoardSlot(clampIndex(persistedState.activeBoardSlot ?? 0, 4));
-        setActivePicker(
-          persistedState.activePicker === "board" ? "board" : "hole",
-        );
-        setOpponentCount(clampIndex(persistedState.opponentCount ?? 1, 9) || 1);
-        setSimulationInput(persistedState.simulationInput ?? "25000");
-        setSimulationResult(persistedState.simulationResult ?? null);
-        setRunHistory(persistedState.runHistory ?? []);
+        setSelectedHoleCards(persistedState.selectedHoleCards);
+        setSelectedBoardCards(persistedState.selectedBoardCards);
+        setActiveTarget(persistedState.activeTarget);
+        setOpponentCount(persistedState.opponentCount);
+        setOpponentSeats(persistedState.opponentSeats);
+        setSimulationInput(persistedState.simulationInput);
+        setSimulationResult(persistedState.simulationResult);
+        setRunHistory(persistedState.runHistory);
+        setComparisonRunId(persistedState.comparisonRunId);
       }
 
       setHasHydrated(true);
@@ -355,27 +459,27 @@ export default function Home() {
     const nextState: PersistedState = {
       selectedHoleCards,
       selectedBoardCards,
-      activeHoleSlot,
-      activeBoardSlot,
-      activePicker,
+      activeTarget,
       opponentCount,
+      opponentSeats,
       simulationInput,
       simulationResult,
       runHistory,
+      comparisonRunId,
     };
 
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(nextState));
   }, [
-    activeBoardSlot,
-    activeHoleSlot,
-    activePicker,
+    activeTarget,
+    comparisonRunId,
+    hasHydrated,
     opponentCount,
+    opponentSeats,
     runHistory,
     selectedBoardCards,
     selectedHoleCards,
     simulationInput,
     simulationResult,
-    hasHydrated,
   ]);
 
   useEffect(() => {
@@ -385,28 +489,50 @@ export default function Home() {
     };
   }, []);
 
-  const nextEmptyHoleSlot = selectedHoleCards.findIndex((card) => card === null);
-  const nextEmptyBoardSlot = selectedBoardCards.findIndex((card) => card === null);
-  const usedCards = new Set(
-    [...selectedHoleCards, ...selectedBoardCards].filter(Boolean),
+  const visibleOpponentSeats = opponentSeats.slice(0, opponentCount);
+  const usedCards = getUsedCards(
+    selectedHoleCards,
+    selectedBoardCards,
+    opponentSeats,
+    opponentCount,
   );
   const holeCardsSelected = selectedHoleCards.filter(Boolean).length;
   const boardCardsSelected = selectedBoardCards.filter(Boolean).length;
   const remainingDeckCount = DECK.length - usedCards.size;
-  const hasBoardGap = selectedBoardCards.some(
-    (card, index) => card === null && selectedBoardCards.slice(index + 1).some(Boolean),
-  );
   const parsedSimulationCount = Number.parseInt(simulationInput, 10);
   const isSimulationCountValid =
     Number.isFinite(parsedSimulationCount) &&
     parsedSimulationCount >= 1000 &&
     parsedSimulationCount <= 500000;
   const isOpponentCountValid = opponentCount >= 1 && opponentCount <= 9;
+  const hasBoardGap = selectedBoardCards.some(
+    (card, index) => card === null && selectedBoardCards.slice(index + 1).some(Boolean),
+  );
+  const hasPartialKnownSeat = visibleOpponentSeats.some(
+    (seat) =>
+      seat.mode === "known" &&
+      seat.cards.filter(Boolean).length > 0 &&
+      seat.cards.filter(Boolean).length < 2,
+  );
+  const hiddenOpponentSeats = Math.max(opponentCount - getKnownSeatCount(opponentSeats, opponentCount), 0);
+  const boardCardsNeeded = 5 - boardCardsSelected;
+  const randomCardsNeeded =
+    boardCardsNeeded +
+    visibleOpponentSeats.reduce((total, seat) => {
+      if (seat.mode !== "known") {
+        return total + 2;
+      }
+
+      return total + Math.max(2 - seat.cards.filter(Boolean).length, 0);
+    }, 0);
+  const hasEnoughCardsRemaining = remainingDeckCount >= randomCardsNeeded;
   const canRunSimulation =
     holeCardsSelected === 2 &&
     !hasBoardGap &&
+    !hasPartialKnownSeat &&
     isSimulationCountValid &&
-    isOpponentCountValid;
+    isOpponentCountValid &&
+    hasEnoughCardsRemaining;
   const boardStage =
     boardCardsSelected === 0
       ? "Preflop"
@@ -416,27 +542,26 @@ export default function Home() {
           ? "Turn"
           : "River";
   const activeTargetLabel =
-    activePicker === "hole"
-      ? `Hole card slot ${activeHoleSlot + 1}`
-      : BOARD_STREETS[activeBoardSlot];
+    activeTarget.area === "hole"
+      ? `Hero card ${activeTarget.slot + 1}`
+      : activeTarget.area === "board"
+        ? BOARD_STREETS[activeTarget.slot]
+        : `Opponent ${activeTarget.seat + 1} card ${activeTarget.slot + 1}`;
+  const opponentSummary =
+    visibleOpponentSeats
+      .map((seat, index) =>
+        seat.mode === "known"
+          ? `O${index + 1}: ${formatCards(seat.cards)}`
+          : `O${index + 1}: random`,
+      )
+      .join(" • ") || "No opponents";
   const scenarioSummary = [
     formatCards(selectedHoleCards),
     formatCards(selectedBoardCards),
     `vs ${opponentCount} opponent${opponentCount === 1 ? "" : "s"}`,
     boardStage,
   ].join(" • ");
-  const statusMessage =
-    holeCardsSelected < 2
-      ? "Choose both hole cards to unlock simulation runs."
-      : hasBoardGap
-        ? "Fill community cards from left to right so the board state stays valid."
-        : !isOpponentCountValid
-          ? "Choose between 1 and 9 opponents."
-          : !isSimulationCountValid
-            ? "Enter a simulation count between 1,000 and 500,000."
-            : simulationError
-              ? simulationError
-              : "Selections look valid. You can run the simulation now.";
+  const comparisonEntry = runHistory.find((entry) => entry.id === comparisonRunId) ?? null;
   const resultSummary =
     simulationResult ?? {
       win: 0,
@@ -457,7 +582,7 @@ export default function Home() {
     {
       label: "Lose",
       value: formatPercent(resultSummary.lose),
-      detail: isRunningSimulation ? "Updating in background" : "Hero loses to any opponent",
+      detail: isRunningSimulation ? "Updating in background" : "Any opponent beats hero",
       tone: "bg-slate-800 dark:bg-slate-400",
     },
     {
@@ -497,140 +622,139 @@ export default function Home() {
       const rightValue = Number.parseFloat(right.value);
       return rightValue - leftValue;
     })[0];
+  const statusMessage =
+    holeCardsSelected < 2
+      ? "Choose both hero hole cards to unlock simulations."
+      : hasBoardGap
+        ? "Fill the community board from left to right so the street state stays valid."
+        : hasPartialKnownSeat
+          ? "Known opponent seats need both cards filled before a run can start."
+          : !hasEnoughCardsRemaining
+            ? "This table setup uses too many fixed cards for the remaining deck."
+            : !isOpponentCountValid
+              ? "Choose between 1 and 9 opponents."
+              : !isSimulationCountValid
+                ? "Enter a simulation count between 1,000 and 500,000."
+                : simulationError
+                  ? simulationError
+                  : "Selections look valid. You can run the simulation now.";
+
+  function clearSimulationState() {
+    setSimulationResult(null);
+    setSimulationError(null);
+    setSimulationProgress(0);
+    setCompletedSimulations(0);
+  }
 
   function toggleThemeMode() {
     setThemeMode((currentMode) => (currentMode === "light" ? "dark" : "light"));
   }
 
+  function updateSeat(
+    seatIndex: number,
+    updater: (seat: OpponentSeat) => OpponentSeat,
+  ) {
+    setOpponentSeats((currentSeats) =>
+      currentSeats.map((seat, index) =>
+        index === seatIndex ? updater(seat) : seat,
+      ),
+    );
+  }
+
   function setScenarioPreset(preset: (typeof SCENARIO_PRESETS)[number]) {
     setSelectedHoleCards([...preset.holeCards]);
     setSelectedBoardCards([...preset.boardCards]);
-    setActiveHoleSlot(0);
-    setActiveBoardSlot(preset.activeBoardSlot);
-    setActivePicker(preset.activePicker);
     setOpponentCount(preset.opponentCount);
-    setSimulationResult(null);
-    setSimulationError(null);
+    setOpponentSeats(createDefaultOpponentSeats());
+    setActiveTarget({ area: "board", slot: 0 });
+    clearSimulationState();
   }
 
-  function handleHoleCardSelect(cardId: string) {
-    const shouldAdvanceSlot =
-      selectedHoleCards[activeHoleSlot] === null && nextEmptyHoleSlot !== -1;
+  function assignCardToTarget(cardId: string) {
+    if (isRunningSimulation) {
+      return;
+    }
 
-    setSelectedHoleCards((currentCards) => {
-      if (currentCards.includes(cardId)) {
-        return currentCards;
-      }
+    if (activeTarget.area === "hole") {
+      setSelectedHoleCards((currentCards) =>
+        currentCards.map((card, index) =>
+          index === activeTarget.slot ? cardId : card,
+        ),
+      );
+    }
 
-      const updatedCards = [...currentCards];
-      const targetSlot =
-        currentCards[activeHoleSlot] === null
-          ? activeHoleSlot
-          : currentCards.findIndex((card) => card === null);
+    if (activeTarget.area === "board") {
+      setSelectedBoardCards((currentCards) =>
+        currentCards.map((card, index) =>
+          index === activeTarget.slot ? cardId : card,
+        ),
+      );
+    }
 
-      if (targetSlot === -1) {
-        updatedCards[activeHoleSlot] = cardId;
-        return updatedCards;
-      }
+    if (activeTarget.area === "opponent") {
+      updateSeat(activeTarget.seat, (seat) => ({
+        mode: "known",
+        cards: seat.cards.map((card, index) =>
+          index === activeTarget.slot ? cardId : card,
+        ),
+      }));
+    }
 
-      updatedCards[targetSlot] = cardId;
-      return updatedCards;
-    });
-
-    setActiveHoleSlot((currentSlot) => {
-      if (shouldAdvanceSlot) {
-        return currentSlot === 0 ? 1 : 0;
-      }
-
-      return currentSlot;
-    });
-    setActivePicker("hole");
-    setSimulationResult(null);
-    setSimulationError(null);
-  }
-
-  function handleBoardCardSelect(cardId: string) {
-    const shouldAdvanceSlot =
-      selectedBoardCards[activeBoardSlot] === null && nextEmptyBoardSlot !== -1;
-
-    setSelectedBoardCards((currentCards) => {
-      if (currentCards.includes(cardId)) {
-        return currentCards;
-      }
-
-      const updatedCards = [...currentCards];
-      const targetSlot =
-        currentCards[activeBoardSlot] === null
-          ? activeBoardSlot
-          : currentCards.findIndex((card) => card === null);
-
-      if (targetSlot === -1) {
-        updatedCards[activeBoardSlot] = cardId;
-        return updatedCards;
-      }
-
-      updatedCards[targetSlot] = cardId;
-      return updatedCards;
-    });
-
-    setActiveBoardSlot((currentSlot) => {
-      if (shouldAdvanceSlot) {
-        return Math.min(currentSlot + 1, 4);
-      }
-
-      return currentSlot;
-    });
-    setActivePicker("board");
-    setSimulationResult(null);
-    setSimulationError(null);
+    clearSimulationState();
   }
 
   function clearHoleSlot(slotIndex: number) {
     setSelectedHoleCards((currentCards) =>
       currentCards.map((card, index) => (index === slotIndex ? null : card)),
     );
-    setActiveHoleSlot(slotIndex);
-    setActivePicker("hole");
-    setSimulationResult(null);
-    setSimulationError(null);
+    setActiveTarget({ area: "hole", slot: slotIndex });
+    clearSimulationState();
   }
 
   function clearBoardSlot(slotIndex: number) {
     setSelectedBoardCards((currentCards) =>
       currentCards.map((card, index) => (index === slotIndex ? null : card)),
     );
-    setActiveBoardSlot(slotIndex);
-    setActivePicker("board");
-    setSimulationResult(null);
-    setSimulationError(null);
+    setActiveTarget({ area: "board", slot: slotIndex });
+    clearSimulationState();
+  }
+
+  function clearOpponentSlot(seatIndex: number, slotIndex: number) {
+    updateSeat(seatIndex, (seat) => ({
+      ...seat,
+      cards: seat.cards.map((card, index) => (index === slotIndex ? null : card)),
+    }));
+    setActiveTarget({ area: "opponent", seat: seatIndex, slot: slotIndex });
+    clearSimulationState();
   }
 
   function clearAllHoleCards() {
     setSelectedHoleCards([null, null]);
-    setActiveHoleSlot(0);
-    setActivePicker("hole");
-    setSimulationResult(null);
-    setSimulationError(null);
+    setActiveTarget({ area: "hole", slot: 0 });
+    clearSimulationState();
   }
 
   function clearAllBoardCards() {
     setSelectedBoardCards([null, null, null, null, null]);
-    setActiveBoardSlot(0);
-    setActivePicker("board");
-    setSimulationResult(null);
-    setSimulationError(null);
+    setActiveTarget({ area: "board", slot: 0 });
+    clearSimulationState();
+  }
+
+  function clearAllOpponentSeats() {
+    setOpponentSeats(createDefaultOpponentSeats());
+    setActiveTarget({ area: "opponent", seat: 0, slot: 0 });
+    clearSimulationState();
   }
 
   function resetTable() {
     setSelectedHoleCards([null, null]);
     setSelectedBoardCards([null, null, null, null, null]);
-    setActiveHoleSlot(0);
-    setActiveBoardSlot(0);
-    setActivePicker("hole");
+    setActiveTarget({ area: "hole", slot: 0 });
     setOpponentCount(1);
+    setOpponentSeats(createDefaultOpponentSeats());
     setSimulationInput("25000");
-    setSimulationResult(null);
-    setSimulationError(null);
+    setComparisonRunId(null);
+    clearSimulationState();
   }
 
   function dealRandomSetup() {
@@ -638,18 +762,15 @@ export default function Home() {
 
     setSelectedHoleCards(shuffledDeck.slice(0, 2));
     setSelectedBoardCards(shuffledDeck.slice(2, 7));
-    setActiveHoleSlot(0);
-    setActiveBoardSlot(4);
-    setActivePicker("board");
-    setSimulationResult(null);
-    setSimulationError(null);
+    setOpponentSeats(createDefaultOpponentSeats());
+    setActiveTarget({ area: "board", slot: 4 });
+    clearSimulationState();
   }
 
   function dealBoardThrough(targetCount: number) {
     const availableCards = shuffleCards(
       DECK.map((card) => card.id).filter((cardId) => !usedCards.has(cardId)),
     );
-
     const nextBoardCards = [...selectedBoardCards];
     let deckIndex = 0;
 
@@ -663,10 +784,76 @@ export default function Home() {
     }
 
     setSelectedBoardCards(nextBoardCards);
-    setActiveBoardSlot(clampIndex(targetCount - 1, 4));
-    setActivePicker("board");
-    setSimulationResult(null);
+    setActiveTarget({ area: "board", slot: clampIndex(targetCount - 1, 4) });
+    clearSimulationState();
+  }
+
+  function setOpponentSeatMode(seatIndex: number, mode: OpponentMode) {
+    updateSeat(seatIndex, () => ({
+      mode,
+      cards: mode === "known" ? [null, null] : [null, null],
+    }));
+    setActiveTarget({ area: "opponent", seat: seatIndex, slot: 0 });
+    clearSimulationState();
+  }
+
+  function loadHistoryEntry(entry: RunHistoryEntry) {
+    const nextSeats = createDefaultOpponentSeats().map((seat, index) =>
+      normalizeSeat(entry.setup.opponentSeats[index] ?? seat),
+    );
+
+    setSelectedHoleCards([
+      entry.setup.selectedHoleCards[0] ?? null,
+      entry.setup.selectedHoleCards[1] ?? null,
+    ]);
+    setSelectedBoardCards([
+      entry.setup.selectedBoardCards[0] ?? null,
+      entry.setup.selectedBoardCards[1] ?? null,
+      entry.setup.selectedBoardCards[2] ?? null,
+      entry.setup.selectedBoardCards[3] ?? null,
+      entry.setup.selectedBoardCards[4] ?? null,
+    ]);
+    setOpponentCount(entry.setup.opponentCount);
+    setOpponentSeats(nextSeats);
+    setActiveTarget({ area: "hole", slot: 0 });
+    setSimulationResult(entry.result);
+    setSimulationProgress(100);
+    setCompletedSimulations(entry.result.simulations);
     setSimulationError(null);
+    setComparisonRunId(entry.id);
+  }
+
+  function exportHistory() {
+    if (runHistory.length === 0) {
+      return;
+    }
+
+    downloadTextFile(
+      "poker-simulation-history.csv",
+      buildRunHistoryCsv(runHistory),
+      "text/csv;charset=utf-8",
+    );
+  }
+
+  function exportLatestResult() {
+    if (!simulationResult) {
+      return;
+    }
+
+    downloadTextFile(
+      "poker-latest-result.json",
+      JSON.stringify(
+        {
+          createdAt: new Date().toISOString(),
+          summary: scenarioSummary,
+          result: simulationResult,
+          comparisonRunId,
+        },
+        null,
+        2,
+      ),
+      "application/json;charset=utf-8",
+    );
   }
 
   function runSimulation() {
@@ -686,6 +873,11 @@ export default function Home() {
     );
     const boardCards = selectedBoardCards.filter(
       (cardId): cardId is string => cardId !== null,
+    );
+    const knownOpponentHoleCards = visibleOpponentSeats.map((seat) =>
+      seat.mode === "known"
+        ? seat.cards.filter((cardId): cardId is string => cardId !== null)
+        : [],
     );
     const summary = [
       formatCards(selectedHoleCards),
@@ -719,9 +911,18 @@ export default function Home() {
               createdAt: new Date().toISOString(),
               summary,
               result: completedResult,
+              setup: {
+                selectedHoleCards: heroHoleCards,
+                selectedBoardCards: boardCards,
+                opponentCount,
+                opponentSeats: visibleOpponentSeats.map((seat) => ({
+                  mode: seat.mode,
+                  cards: [...seat.cards],
+                })),
+              },
             },
             ...currentHistory,
-          ].slice(0, 6),
+          ].slice(0, 12),
         );
         setSimulationProgress(100);
         setCompletedSimulations(completedResult.simulations);
@@ -748,6 +949,7 @@ export default function Home() {
       type: "run",
       heroHoleCards,
       boardCards,
+      knownOpponentHoleCards,
       simulations: parsedSimulationCount,
       opponents: opponentCount,
     });
@@ -757,11 +959,13 @@ export default function Home() {
     simulationWorkerRef.current?.terminate();
     simulationWorkerRef.current = null;
     setIsRunningSimulation(false);
+    setSimulationProgress(0);
+    setCompletedSimulations(0);
     setSimulationError("Simulation cancelled.");
   }
 
   return (
-    <main className="mx-auto min-h-screen w-full max-w-[1500px] px-4 py-4 sm:px-6 lg:px-8 lg:py-6">
+    <main className="mx-auto min-h-screen w-full max-w-[1600px] px-4 py-4 sm:px-6 lg:px-8 lg:py-6">
       <div className="grid gap-6">
         <header
           className={cn(
@@ -771,61 +975,64 @@ export default function Home() {
               : "border-stone-200 bg-white shadow-[0_24px_80px_-44px_rgba(35,23,10,0.18)]",
           )}
         >
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-            <div className="space-y-3">
+          <div className="flex flex-col gap-5">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
               <div className="inline-flex items-center gap-2 rounded-full border border-border bg-muted/50 px-3 py-1 text-xs font-semibold uppercase tracking-[0.28em] text-muted-foreground">
                 <Sparkles className="size-3.5 text-primary" />
                 Texas Hold&apos;em Monte Carlo
               </div>
-              <div className="max-w-4xl space-y-3">
-                <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl lg:text-5xl">
-                  Simulate poker odds with a cleaner table builder and real-time results.
-                </h1>
-                <p className={cn("max-w-3xl text-base leading-7 sm:text-lg", mutedTextClass)}>
-                  Pick a hand, shape the board, choose opponents, and run a worker-backed
-                  Monte Carlo simulation without the UI getting in your way.
-                </p>
+
+              <div className="flex flex-wrap items-center gap-3">
+                <Button
+                  variant="outline"
+                  className={cn("gap-2", outlineButtonClass)}
+                  onClick={toggleThemeMode}
+                >
+                  {themeMode === "light" ? (
+                    <>
+                      <MoonStar className="size-4" />
+                      Dark mode
+                    </>
+                  ) : (
+                    <>
+                      <SunMedium className="size-4" />
+                      Light mode
+                    </>
+                  )}
+                </Button>
+                <Button
+                  variant="outline"
+                  className={cn("gap-2", outlineButtonClass)}
+                  onClick={dealRandomSetup}
+                  disabled={isRunningSimulation}
+                >
+                  <WandSparkles className="size-4" />
+                  Deal random table
+                </Button>
+                <Button
+                  variant="outline"
+                  className={cn("gap-2", outlineButtonClass)}
+                  onClick={resetTable}
+                  disabled={isRunningSimulation}
+                >
+                  <RotateCcw className="size-4" />
+                  Reset
+                </Button>
               </div>
             </div>
 
-            <div className="flex flex-wrap items-center gap-3">
-              <Button
-                variant="outline"
-                className={cn("gap-2", outlineButtonClass)}
-                onClick={toggleThemeMode}
-              >
-                {themeMode === "light" ? (
-                  <>
-                    <MoonStar className="size-4" />
-                    Dark mode
-                  </>
-                ) : (
-                  <>
-                    <SunMedium className="size-4" />
-                    Light mode
-                  </>
-                )}
-              </Button>
-              <Button
-                variant="outline"
-                className={cn("gap-2", outlineButtonClass)}
-                onClick={dealRandomSetup}
-              >
-                <WandSparkles className="size-4" />
-                Deal random table
-              </Button>
-              <Button
-                variant="outline"
-                className={cn("gap-2", outlineButtonClass)}
-                onClick={resetTable}
-              >
-                <RotateCcw className="size-4" />
-                Reset
-              </Button>
+            <div className="space-y-3">
+              <h1 className="max-w-none text-3xl font-semibold tracking-tight sm:text-4xl lg:text-6xl">
+                Simulate poker odds with fixed seats, exportable history, and real charts.
+              </h1>
+              <p className={cn("max-w-none text-base leading-7 sm:text-xl", mutedTextClass)}>
+                Build the table, lock in specific opponent hands when needed, then run
+                worker-backed simulations without giving up responsive UI feedback.
+              </p>
             </div>
           </div>
 
-          <div className="grid gap-3 lg:grid-cols-[1.2fr_0.8fr]">
+          <div className="grid gap-3 lg:grid-cols-[1.25fr_0.75fr]">
             <div className="rounded-[1.6rem] border border-border bg-[linear-gradient(135deg,rgba(15,118,110,0.96),rgba(22,48,43,0.94))] p-5 text-white shadow-[0_24px_70px_-32px_rgba(12,74,110,0.45)]">
               <div className="flex flex-col gap-5">
                 <div className="flex flex-wrap items-center gap-2 text-xs">
@@ -838,6 +1045,10 @@ export default function Home() {
                   <span className="rounded-full border border-white/12 bg-white/10 px-3 py-1">
                     {opponentCount} opponent{opponentCount === 1 ? "" : "s"}
                   </span>
+                  <span className="rounded-full border border-white/12 bg-white/10 px-3 py-1">
+                    {getKnownSeatCount(opponentSeats, opponentCount)} fixed seat
+                    {getKnownSeatCount(opponentSeats, opponentCount) === 1 ? "" : "s"}
+                  </span>
                 </div>
                 <div className="grid gap-3 sm:grid-cols-[auto_1fr] sm:items-start">
                   <div className="flex gap-3">
@@ -847,17 +1058,17 @@ export default function Home() {
                         <button
                           key={`hero-card-${index}`}
                           type="button"
-                          onClick={() => {
-                            setActiveHoleSlot(index);
-                            setActivePicker("hole");
-                          }}
+                          onClick={() => setActiveTarget({ area: "hole", slot: index })}
                           className="text-left"
+                          disabled={isRunningSimulation}
                         >
                           <PlayingCard
                             value={card ? `${card.rank}${card.symbol}` : "--"}
-                            caption={`Hole ${index + 1}`}
+                            caption={`Hero ${index + 1}`}
                             accent={card?.tone}
-                            active={activePicker === "hole" && activeHoleSlot === index}
+                            active={
+                              activeTarget.area === "hole" && activeTarget.slot === index
+                            }
                             filled={Boolean(card)}
                             isDarkMode={isDarkMode}
                           />
@@ -867,6 +1078,7 @@ export default function Home() {
                   </div>
                   <div className="space-y-3">
                     <p className="text-sm leading-6 text-white/82">{scenarioSummary}</p>
+                    <p className="text-sm leading-6 text-white/70">{opponentSummary}</p>
                     <div className="flex flex-wrap gap-3">
                       <Button
                         variant="outline"
@@ -930,23 +1142,20 @@ export default function Home() {
           </div>
         </header>
 
-        <section className="grid gap-6 xl:grid-cols-[380px_minmax(0,1fr)_360px]">
+        <section className="grid gap-6 xl:grid-cols-[360px_minmax(0,1fr)_380px]">
           <div className="grid gap-6">
             <Card className={panelCardClass}>
               <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Dices className="size-5 text-primary" />
-                  Setup Summary
-                </CardTitle>
+                <CardTitle>Setup Summary</CardTitle>
                 <CardDescription>
-                  Keep the important controls together and the rest out of the way.
+                  The table is now aware of fixed opponents as part of the setup.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className={cn("rounded-2xl border p-4", mutedPanelClass)}>
                   <p className={cn("text-sm font-medium", strongTextClass)}>Table status</p>
                   <p className={cn("mt-2 text-sm leading-6", mutedTextClass)}>
-                    {holeCardsSelected}/2 hole cards selected, {boardCardsSelected}/5 board
+                    {holeCardsSelected}/2 hero cards selected, {boardCardsSelected}/5 board
                     cards selected, {remainingDeckCount} cards still available.
                   </p>
                   <p className={cn("mt-2 text-sm leading-6", mutedTextClass)}>
@@ -959,15 +1168,21 @@ export default function Home() {
                   ) : null}
                 </div>
 
-                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
+                <div className="grid gap-3">
                   <div className={cn("rounded-2xl border p-4", insetPanelClass)}>
-                    <p className={cn("text-sm", mutedTextClass)}>Focus</p>
+                    <p className={cn("text-sm", mutedTextClass)}>Active target</p>
                     <p className="mt-1 text-lg font-semibold">{activeTargetLabel}</p>
                   </div>
                   <div className={cn("rounded-2xl border p-4", insetPanelClass)}>
                     <p className={cn("text-sm", mutedTextClass)}>Best outcome</p>
                     <p className="mt-1 text-lg font-semibold">
                       {bestOutcome.label} {bestOutcome.value}
+                    </p>
+                  </div>
+                  <div className={cn("rounded-2xl border p-4", insetPanelClass)}>
+                    <p className={cn("text-sm", mutedTextClass)}>Seat mix</p>
+                    <p className="mt-1 text-lg font-semibold">
+                      {getKnownSeatCount(opponentSeats, opponentCount)} fixed / {hiddenOpponentSeats} random
                     </p>
                   </div>
                 </div>
@@ -980,6 +1195,7 @@ export default function Home() {
                       size="sm"
                       className={outlineButtonClass}
                       onClick={() => setScenarioPreset(preset)}
+                      disabled={isRunningSimulation}
                     >
                       {preset.label}
                     </Button>
@@ -992,15 +1208,12 @@ export default function Home() {
               <CardHeader>
                 <CardTitle>Simulation Controls</CardTitle>
                 <CardDescription>
-                  Set scale, opponent count, and launch background runs from one place.
+                  Set volume, seat count, and export the results you care about.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-5">
                 <div className="space-y-3">
-                  <label
-                    htmlFor="simulations"
-                    className="text-sm font-medium text-foreground"
-                  >
+                  <label htmlFor="simulations" className="text-sm font-medium text-foreground">
                     Number of simulations
                   </label>
                   <Input
@@ -1009,6 +1222,7 @@ export default function Home() {
                     value={simulationInput}
                     onChange={(event) => setSimulationInput(event.target.value)}
                     placeholder="25000"
+                    disabled={isRunningSimulation}
                   />
                   <div className="flex flex-wrap gap-2">
                     {SIMULATION_PRESETS.map((preset) => (
@@ -1018,6 +1232,7 @@ export default function Home() {
                         size="sm"
                         className={outlineButtonClass}
                         onClick={() => setSimulationInput(String(preset))}
+                        disabled={isRunningSimulation}
                       >
                         {preset.toLocaleString()}
                       </Button>
@@ -1026,10 +1241,7 @@ export default function Home() {
                 </div>
 
                 <div className="space-y-3">
-                  <label
-                    htmlFor="opponents"
-                    className="text-sm font-medium text-foreground"
-                  >
+                  <label htmlFor="opponents" className="text-sm font-medium text-foreground">
                     Number of opponents
                   </label>
                   <Input
@@ -1044,6 +1256,7 @@ export default function Home() {
                       )
                     }
                     placeholder="1"
+                    disabled={isRunningSimulation}
                   />
                   <div className="flex flex-wrap gap-2">
                     {OPPONENT_PRESETS.map((preset) => (
@@ -1053,6 +1266,7 @@ export default function Home() {
                         size="sm"
                         className={outlineButtonClass}
                         onClick={() => setOpponentCount(preset)}
+                        disabled={isRunningSimulation}
                       >
                         {preset} opponent{preset === 1 ? "" : "s"}
                       </Button>
@@ -1075,9 +1289,9 @@ export default function Home() {
                   </div>
                 </div>
 
-                <div className="flex gap-3">
+                <div className="grid gap-3 sm:grid-cols-2">
                   <Button
-                    className="flex-1"
+                    className="w-full"
                     onClick={runSimulation}
                     disabled={!canRunSimulation || isRunningSimulation}
                   >
@@ -1088,9 +1302,31 @@ export default function Home() {
                     variant="outline"
                     className={outlineButtonClass}
                     onClick={resetTable}
+                    disabled={isRunningSimulation}
                   >
                     <RotateCcw className="mr-2 size-4" />
                     Reset
+                  </Button>
+                </div>
+
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <Button
+                    variant="outline"
+                    className={outlineButtonClass}
+                    onClick={exportHistory}
+                    disabled={runHistory.length === 0}
+                  >
+                    <Download className="mr-2 size-4" />
+                    Export history
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className={outlineButtonClass}
+                    onClick={exportLatestResult}
+                    disabled={!simulationResult}
+                  >
+                    <Download className="mr-2 size-4" />
+                    Export latest
                   </Button>
                 </div>
               </CardContent>
@@ -1102,19 +1338,19 @@ export default function Home() {
               <CardHeader>
                 <CardTitle>Table Builder</CardTitle>
                 <CardDescription>
-                  Hole cards, community board, and deck controls stay separated so the
-                  table is easier to read.
+                  Hero cards, board cards, and fixed opponent seats all use the same deck.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-6">
                 <div className="space-y-3">
                   <div className="flex items-center justify-between">
-                    <p className="text-sm font-medium">Hole cards</p>
+                    <p className="text-sm font-medium">Hero hole cards</p>
                     <Button
                       variant="outline"
                       size="sm"
                       className={outlineButtonClass}
                       onClick={clearAllHoleCards}
+                      disabled={isRunningSimulation}
                     >
                       Clear all
                     </Button>
@@ -1127,27 +1363,27 @@ export default function Home() {
                         <div
                           key={`hole-slot-${index}`}
                           className={`rounded-2xl border p-4 ${
-                            activePicker === "hole" && activeHoleSlot === index
+                            activeTarget.area === "hole" && activeTarget.slot === index
                               ? "border-primary bg-primary/5"
-                            : cn("border", insetPanelClass)
+                              : cn("border", insetPanelClass)
                           }`}
                         >
                           <button
                             type="button"
-                            onClick={() => {
-                              setActiveHoleSlot(index);
-                              setActivePicker("hole");
-                            }}
+                            onClick={() => setActiveTarget({ area: "hole", slot: index })}
                             className="flex w-full items-start gap-4 text-left"
+                            disabled={isRunningSimulation}
                           >
-                          <PlayingCard
-                            value={card ? `${card.rank}${card.symbol}` : "--"}
-                            caption={`Hole ${index + 1}`}
-                            accent={card?.tone}
-                            active={activePicker === "hole" && activeHoleSlot === index}
-                            filled={Boolean(card)}
-                            isDarkMode={isDarkMode}
-                          />
+                            <PlayingCard
+                              value={card ? `${card.rank}${card.symbol}` : "--"}
+                              caption={`Hero ${index + 1}`}
+                              accent={card?.tone}
+                              active={
+                                activeTarget.area === "hole" && activeTarget.slot === index
+                              }
+                              filled={Boolean(card)}
+                              isDarkMode={isDarkMode}
+                            />
                             <div className="space-y-2">
                               <p className="text-sm font-medium">Hero slot {index + 1}</p>
                               <p className={cn("text-sm", mutedTextClass)}>
@@ -1161,6 +1397,7 @@ export default function Home() {
                               size="sm"
                               className={cn("mt-4 w-full", outlineButtonClass)}
                               onClick={() => clearHoleSlot(index)}
+                              disabled={isRunningSimulation}
                             >
                               Clear slot
                             </Button>
@@ -1180,6 +1417,7 @@ export default function Home() {
                         size="sm"
                         className={outlineButtonClass}
                         onClick={clearAllBoardCards}
+                        disabled={isRunningSimulation}
                       >
                         Clear board
                       </Button>
@@ -1190,6 +1428,7 @@ export default function Home() {
                           size="sm"
                           className={outlineButtonClass}
                           onClick={() => dealBoardThrough(preset.count)}
+                          disabled={isRunningSimulation}
                         >
                           {preset.label}
                         </Button>
@@ -1205,25 +1444,25 @@ export default function Home() {
                         <div
                           key={`board-slot-${index}`}
                           className={`rounded-2xl border p-4 ${
-                            activePicker === "board" && activeBoardSlot === index
+                            activeTarget.area === "board" && activeTarget.slot === index
                               ? "border-accent bg-accent/8"
-                            : cn("border", insetPanelClass)
+                              : cn("border", insetPanelClass)
                           }`}
                         >
                           <button
                             type="button"
-                            onClick={() => {
-                              setActiveBoardSlot(index);
-                              setActivePicker("board");
-                            }}
+                            onClick={() => setActiveTarget({ area: "board", slot: index })}
                             className="space-y-3 text-left"
+                            disabled={isRunningSimulation}
                           >
                             <p className="text-sm font-medium">{BOARD_STREETS[index]}</p>
                             <PlayingCard
                               value={card ? `${card.rank}${card.symbol}` : "--"}
                               caption={boardStage}
                               accent={card?.tone}
-                              active={activePicker === "board" && activeBoardSlot === index}
+                              active={
+                                activeTarget.area === "board" && activeTarget.slot === index
+                              }
                               filled={Boolean(card)}
                               isDarkMode={isDarkMode}
                             />
@@ -1237,6 +1476,7 @@ export default function Home() {
                               size="sm"
                               className={cn("mt-4 w-full", outlineButtonClass)}
                               onClick={() => clearBoardSlot(index)}
+                              disabled={isRunningSimulation}
                             >
                               Clear slot
                             </Button>
@@ -1246,24 +1486,132 @@ export default function Home() {
                     })}
                   </div>
                 </div>
+
+                <div className="space-y-3">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <p className="text-sm font-medium">Opponent seats</p>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className={outlineButtonClass}
+                      onClick={clearAllOpponentSeats}
+                      disabled={isRunningSimulation}
+                    >
+                      Clear opponents
+                    </Button>
+                  </div>
+                  <div className="grid gap-3 xl:grid-cols-2">
+                    {visibleOpponentSeats.map((seat, seatIndex) => (
+                      <div
+                        key={`opponent-seat-${seatIndex}`}
+                        className={cn("rounded-2xl border p-4", insetPanelClass)}
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <p className="text-sm font-medium">Opponent {seatIndex + 1}</p>
+                            <p className={cn("mt-1 text-sm", mutedTextClass)}>
+                              {seat.mode === "known"
+                                ? "Cards are fixed into the simulation."
+                                : "Seat remains random for every trial."}
+                            </p>
+                          </div>
+                          <div className="flex gap-2">
+                            <Button
+                              variant={seat.mode === "random" ? "secondary" : "outline"}
+                              size="sm"
+                              className={seat.mode === "random" ? "" : outlineButtonClass}
+                              onClick={() => setOpponentSeatMode(seatIndex, "random")}
+                              disabled={isRunningSimulation}
+                            >
+                              Random
+                            </Button>
+                            <Button
+                              variant={seat.mode === "known" ? "secondary" : "outline"}
+                              size="sm"
+                              className={seat.mode === "known" ? "" : outlineButtonClass}
+                              onClick={() => setOpponentSeatMode(seatIndex, "known")}
+                              disabled={isRunningSimulation}
+                            >
+                              Fixed
+                            </Button>
+                          </div>
+                        </div>
+
+                        <div className="mt-4 flex gap-3">
+                          {seat.cards.map((cardId, slotIndex) => {
+                            const card = getCardDetails(cardId);
+                            const isActive =
+                              activeTarget.area === "opponent" &&
+                              activeTarget.seat === seatIndex &&
+                              activeTarget.slot === slotIndex;
+
+                            return (
+                              <div key={`seat-${seatIndex}-slot-${slotIndex}`} className="space-y-3">
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setActiveTarget({
+                                      area: "opponent",
+                                      seat: seatIndex,
+                                      slot: slotIndex,
+                                    })
+                                  }
+                                  disabled={seat.mode !== "known" || isRunningSimulation}
+                                  className={cn(
+                                    seat.mode !== "known"
+                                      ? "cursor-not-allowed opacity-60"
+                                      : "text-left",
+                                  )}
+                                >
+                                  <PlayingCard
+                                    value={card ? `${card.rank}${card.symbol}` : "--"}
+                                    caption={`Opp ${slotIndex + 1}`}
+                                    accent={card?.tone}
+                                    active={isActive}
+                                    filled={Boolean(card)}
+                                    isDarkMode={isDarkMode}
+                                  />
+                                </button>
+                                {cardId ? (
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className={outlineButtonClass}
+                                    onClick={() => clearOpponentSlot(seatIndex, slotIndex)}
+                                    disabled={isRunningSimulation}
+                                  >
+                                    Clear
+                                  </Button>
+                                ) : null}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
               </CardContent>
             </Card>
 
             <Card className={panelCardClass}>
               <CardHeader>
-                <CardTitle>Deck</CardTitle>
+                <CardTitle>Shared Deck</CardTitle>
                 <CardDescription>
-                  Click any available card to place it into the active slot.
+                  Click any available card to place it into the current active slot.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className={cn("flex flex-wrap items-center justify-between gap-3 rounded-2xl border px-4 py-3 text-sm", mutedPanelClass)}>
+                <div
+                  className={cn(
+                    "flex flex-wrap items-center justify-between gap-3 rounded-2xl border px-4 py-3 text-sm",
+                    mutedPanelClass,
+                  )}
+                >
                   <p className={cn("font-medium", strongTextClass)}>
                     Active target: <span className="text-primary">{activeTargetLabel}</span>
                   </p>
-                  <p className={mutedTextClass}>
-                    {remainingDeckCount} cards available in the deck
-                  </p>
+                  <p className={mutedTextClass}>{remainingDeckCount} cards available</p>
                 </div>
                 <div className="grid grid-cols-4 gap-2 sm:grid-cols-6 lg:grid-cols-8">
                   {DECK.map((card) => {
@@ -1273,14 +1621,10 @@ export default function Home() {
                       <button
                         key={card.id}
                         type="button"
-                        disabled={isUsed}
-                        onClick={() =>
-                          activePicker === "hole"
-                            ? handleHoleCardSelect(card.id)
-                            : handleBoardCardSelect(card.id)
-                        }
+                        disabled={isUsed || isRunningSimulation}
+                        onClick={() => assignCardToTarget(card.id)}
                         className={`rounded-xl border px-2 py-3 text-center text-sm font-semibold transition-colors ${
-                          isUsed
+                          isUsed || isRunningSimulation
                             ? isDarkMode
                               ? "cursor-not-allowed border-white/10 bg-muted/45 text-muted-foreground line-through opacity-70"
                               : "cursor-not-allowed border-stone-200 bg-stone-100 text-stone-500 line-through opacity-70"
@@ -1306,7 +1650,7 @@ export default function Home() {
                   Results
                 </CardTitle>
                 <CardDescription>
-                  Core odds, run state, and made-hand trends stay in one organized column.
+                  Core odds, run state, and saved comparisons stay together.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
@@ -1341,7 +1685,9 @@ export default function Home() {
                       </p>
                     </div>
                     <div className="text-right">
-                      <p className={cn("text-lg font-semibold", strongTextClass)}>{simulationProgress}%</p>
+                      <p className={cn("text-lg font-semibold", strongTextClass)}>
+                        {simulationProgress}%
+                      </p>
                       <p className={cn("text-xs", softTextClass)}>
                         {isRunningSimulation ? "In progress" : "Last known"}
                       </p>
@@ -1364,7 +1710,7 @@ export default function Home() {
                   Result Details
                 </CardTitle>
                 <CardDescription>
-                  Quick readout of the strongest outcomes and run speed.
+                  Strongest outcomes, speed, and comparison deltas in one view.
                 </CardDescription>
               </CardHeader>
               <CardContent className="grid gap-3">
@@ -1397,6 +1743,17 @@ export default function Home() {
                       : "Waiting for the first simulation"}
                   </p>
                 </div>
+                <div className={cn("rounded-2xl border p-4", insetPanelClass)}>
+                  <p className={cn("text-sm", mutedTextClass)}>Comparison baseline</p>
+                  <p className="mt-1 text-lg font-semibold">
+                    {comparisonEntry ? "Saved run selected" : "None selected"}
+                  </p>
+                  <p className={cn("mt-1 text-sm", mutedTextClass)}>
+                    {comparisonEntry
+                      ? `${formatPercent(resultSummary.win - comparisonEntry.result.win)} win delta`
+                      : "Choose a recent run to compare charts and result deltas."}
+                  </p>
+                </div>
               </CardContent>
             </Card>
 
@@ -1407,49 +1764,184 @@ export default function Home() {
                   Recent Runs
                 </CardTitle>
                 <CardDescription>
-                  Last simulations stay close by without taking over the whole screen.
+                  Save, reload, compare, and export recent simulations.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-3">
                 {runHistory.length === 0 ? (
-                  <div className={cn("rounded-2xl border border-dashed p-4 text-sm", mutedPanelClass, mutedTextClass)}>
+                  <div
+                    className={cn(
+                      "rounded-2xl border border-dashed p-4 text-sm",
+                      mutedPanelClass,
+                      mutedTextClass,
+                    )}
+                  >
                     No completed runs yet.
                   </div>
                 ) : (
-                  runHistory.map((entry) => (
-                    <div
-                      key={entry.id}
-                      className={cn("rounded-2xl border p-4", insetPanelClass)}
-                    >
-                      <div className="flex items-start justify-between gap-4">
-                        <div className="space-y-1">
-                          <p className="text-sm font-medium">{entry.summary}</p>
-                          <p className={cn("text-xs", softTextClass)}>
-                            {new Date(entry.createdAt).toLocaleString()}
-                          </p>
+                  runHistory.map((entry) => {
+                    const isSelectedForComparison = comparisonRunId === entry.id;
+
+                    return (
+                      <div
+                        key={entry.id}
+                        className={cn("rounded-2xl border p-4", insetPanelClass)}
+                      >
+                        <div className="flex items-start justify-between gap-4">
+                          <div className="space-y-1">
+                            <p className="text-sm font-medium">{entry.summary}</p>
+                            <p className={cn("text-xs", softTextClass)}>
+                              {new Date(entry.createdAt).toLocaleString()}
+                            </p>
+                          </div>
+                          <div className="inline-flex items-center gap-1 rounded-full bg-primary/8 px-2.5 py-1 text-xs font-medium text-primary">
+                            <CheckCircle2 className="size-3.5" />
+                            {formatPercent(entry.result.win)} win
+                          </div>
                         </div>
-                        <div className="inline-flex items-center gap-1 rounded-full bg-primary/8 px-2.5 py-1 text-xs font-medium text-primary">
-                          <CheckCircle2 className="size-3.5" />
-                          {formatPercent(entry.result.win)} win
+
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className={outlineButtonClass}
+                            onClick={() => loadHistoryEntry(entry)}
+                          >
+                            Load setup
+                          </Button>
+                          <Button
+                            variant={isSelectedForComparison ? "secondary" : "outline"}
+                            size="sm"
+                            className={isSelectedForComparison ? "" : outlineButtonClass}
+                            onClick={() =>
+                              setComparisonRunId((currentId) =>
+                                currentId === entry.id ? null : entry.id,
+                              )
+                            }
+                          >
+                            <GitCompareArrows className="mr-2 size-4" />
+                            {isSelectedForComparison ? "Comparing" : "Compare"}
+                          </Button>
                         </div>
                       </div>
-                    </div>
-                  ))
+                    );
+                  })
                 )}
               </CardContent>
             </Card>
           </div>
         </section>
 
-        <section className="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
+        <section className="grid gap-6 xl:grid-cols-[0.92fr_1.08fr]">
           <Card className={panelCardClass}>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <BarChart3 className="size-5 text-accent" />
-                Hand Type Breakdown
+                <Users className="size-5 text-secondary" />
+                Seat Overview
               </CardTitle>
               <CardDescription>
-                Hero final-hand distribution across completed trials.
+                Fixed cards and random seats can now coexist in the same simulation.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className={cn("rounded-2xl border p-4", insetPanelClass)}>
+                  <p className={cn("text-sm", mutedTextClass)}>Fixed seats</p>
+                  <p className="mt-1 text-3xl font-semibold">
+                    {getKnownSeatCount(opponentSeats, opponentCount)}
+                  </p>
+                </div>
+                <div className={cn("rounded-2xl border p-4", insetPanelClass)}>
+                  <p className={cn("text-sm", mutedTextClass)}>Random seats</p>
+                  <p className="mt-1 text-3xl font-semibold">{hiddenOpponentSeats}</p>
+                </div>
+              </div>
+              <div className={cn("rounded-2xl border p-4", insetPanelClass)}>
+                <p className={cn("text-sm", mutedTextClass)}>Opponent summary</p>
+                <p className="mt-2 text-sm leading-6">{opponentSummary}</p>
+              </div>
+              <div className={cn("rounded-2xl border p-4", insetPanelClass)}>
+                <p className={cn("text-sm", mutedTextClass)}>History tools</p>
+                <p className="mt-2 text-sm leading-6">
+                  Recent runs can be reloaded into the table, compared against the latest
+                  simulation, or exported for outside analysis.
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className={panelCardClass}>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                {comparisonEntry ? (
+                  <GitCompareArrows className="size-5 text-accent" />
+                ) : (
+                  <CircleOff className="size-5 text-accent" />
+                )}
+                Comparison Summary
+              </CardTitle>
+              <CardDescription>
+                Deltas appear here as soon as you select a saved run for comparison.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {comparisonEntry ? (
+                <>
+                  <div className="grid gap-3 sm:grid-cols-3">
+                    <div className={cn("rounded-2xl border p-4", insetPanelClass)}>
+                      <p className={cn("text-sm", mutedTextClass)}>Win delta</p>
+                      <p className="mt-1 text-2xl font-semibold">
+                        {formatPercent(resultSummary.win - comparisonEntry.result.win)}
+                      </p>
+                    </div>
+                    <div className={cn("rounded-2xl border p-4", insetPanelClass)}>
+                      <p className={cn("text-sm", mutedTextClass)}>Lose delta</p>
+                      <p className="mt-1 text-2xl font-semibold">
+                        {formatPercent(resultSummary.lose - comparisonEntry.result.lose)}
+                      </p>
+                    </div>
+                    <div className={cn("rounded-2xl border p-4", insetPanelClass)}>
+                      <p className={cn("text-sm", mutedTextClass)}>Tie delta</p>
+                      <p className="mt-1 text-2xl font-semibold">
+                        {formatPercent(resultSummary.tie - comparisonEntry.result.tie)}
+                      </p>
+                    </div>
+                  </div>
+                  <div className={cn("rounded-2xl border p-4", insetPanelClass)}>
+                    <p className={cn("text-sm", mutedTextClass)}>Baseline run</p>
+                    <p className="mt-2 text-sm leading-6">{comparisonEntry.summary}</p>
+                  </div>
+                </>
+              ) : (
+                <div className={cn("rounded-2xl border p-4", insetPanelClass)}>
+                  <p className="text-sm leading-6 text-muted-foreground">
+                    Select a recent run to compare outcome rates and hand distributions
+                    against the current table state.
+                  </p>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </section>
+
+        <section className="grid gap-6">
+          <Card className={panelCardClass}>
+            <CardHeader>
+              <CardTitle>Charting</CardTitle>
+              <CardDescription>
+                The app now uses a dedicated charting library instead of mock visuals.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <ResultsCharts result={resultSummary} comparison={comparisonEntry?.result ?? null} />
+            </CardContent>
+          </Card>
+
+          <Card className={panelCardClass}>
+            <CardHeader>
+              <CardTitle>Hand Type Breakdown</CardTitle>
+              <CardDescription>
+                Full hero final-hand distribution across the latest completed trial set.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -1462,70 +1954,11 @@ export default function Home() {
                   <div className="h-2.5 rounded-full bg-muted">
                     <div
                       className="h-full rounded-full bg-[linear-gradient(90deg,var(--primary),var(--accent))]"
-                      style={{ width: `${Math.max(Number(value), 1)}%` }}
+                      style={{ width: `${Math.max(Number(value), 0)}%` }}
                     />
                   </div>
                 </div>
               ))}
-            </CardContent>
-          </Card>
-
-          <Card className={panelCardClass}>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <ChartColumnIncreasing className="size-5 text-secondary" />
-                Visual Summary
-              </CardTitle>
-              <CardDescription>
-                Organized summaries of the latest run instead of one crowded results wall.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="grid gap-4 sm:grid-cols-2">
-              <div className="rounded-2xl border border-dashed border-border bg-[linear-gradient(180deg,rgba(15,118,110,0.05),rgba(15,118,110,0.16))] p-4">
-                <p className="text-sm font-medium">Win indicator</p>
-                <div
-                  className={cn(
-                    "mt-6 flex aspect-square items-center justify-center rounded-full border-[14px] border-primary/18 border-t-primary",
-                    isDarkMode ? "bg-slate-950/40" : "bg-white/80",
-                  )}
-                >
-                  <div className="text-center">
-                    <p className="text-3xl font-semibold">
-                      {isRunningSimulation ? (
-                        <span className="inline-flex items-center gap-2">
-                          <LoaderCircle className="size-5 animate-spin" />
-                          {simulationProgress}%
-                        </span>
-                      ) : (
-                        formatPercent(resultSummary.win)
-                      )}
-                    </p>
-                    <p className={cn("mt-1 text-sm", mutedTextClass)}>Win rate</p>
-                  </div>
-                </div>
-              </div>
-
-              <div className="rounded-2xl border border-dashed border-border bg-[linear-gradient(180deg,rgba(217,119,6,0.04),rgba(217,119,6,0.14))] p-4">
-                <p className="text-sm font-medium">Top outcomes</p>
-                <div className="mt-6 space-y-3">
-                  {topHandLabels.map((entry) => (
-                    <div
-                      key={entry.label}
-                      className={cn(
-                        "rounded-2xl px-4 py-3",
-                        isDarkMode
-                          ? "bg-slate-950/40 shadow-none"
-                          : "bg-white shadow-[0_10px_24px_-18px_rgba(29,20,12,0.18)]",
-                      )}
-                    >
-                      <div className="flex items-center justify-between text-sm">
-                        <span>{entry.label}</span>
-                        <span className="font-medium">{formatPercent(entry.value)}</span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
             </CardContent>
           </Card>
         </section>
