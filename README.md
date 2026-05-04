@@ -48,6 +48,11 @@ npm run test:watch
 
 ## Probability References
 
-- Discrete probability, Monte Carlo simulation, and combinations: https://rafalab.dfci.harvard.edu/dsbook-part-2/prob/discrete-probability.html
-- Poker-hand combinatorics and exact hand frequencies: https://stats.libretexts.org/Bookshelves/Probability_Theory/Probability_Mathematical_Statistics_and_Stochastic_Processes_%28Siegrist%29/13%3A_Games_of_Chance/13.02%3A_Poker
-- Monte Carlo poker equity approximation in practice: https://huggingface.co/papers/1808.07220
+- Pokerology, “Poker Math & Probability: The Complete Guide”
+  https://www.pokerology.com/poker/math/probability/
+- Statistics LibreTexts, “13.2: Poker”
+  https://stats.libretexts.org/Bookshelves/Probability_Theory/Probability_Mathematical_Statistics_and_Stochastic_Processes_%28Siegrist%29/13%3A_Games_of_Chance/13.02%3A_Poker
+- arXiv, “Approximating Poker Probabilities with Deep Learning”
+  https://arxiv.org/abs/1808.07220
+- The ANZIAM Journal, “A simulation study of Texas hold 'em poker: what Taylor Swift understands and James Bond doesn't”
+  https://www.cambridge.org/core/journals/anziam-journal/article/simulation-study-of-texas-hold-em-poker-what-taylor-swift-understands-and-james-bond-doesnt/CB91B0B6D5964E647D383749F1901DD9
