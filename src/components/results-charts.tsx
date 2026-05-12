@@ -18,6 +18,7 @@ import { HAND_LABELS, type MonteCarloResult } from "@/lib/poker";
 
 const OUTCOME_COLORS = ["#0f766e", "#1f2937", "#d97706"];
 const COMPARISON_COLOR = "#9ca3af";
+const PANEL_CLASS = "rounded-[1.75rem] border border-border bg-card/92 p-5";
 
 function formatPercent(value: number) {
   return `${value.toFixed(1)}%`;
@@ -57,12 +58,12 @@ export function ResultsCharts({
   }));
 
   return (
-    <div className="grid gap-6 xl:grid-cols-[0.85fr_1.15fr]">
-      <div className="rounded-[1.75rem] border border-border bg-card/88 p-5">
+    <div className="grid gap-6 xl:grid-cols-[0.88fr_1.12fr]">
+      <div className={PANEL_CLASS}>
         <div className="mb-4">
-          <h3 className="text-base font-semibold">Outcome Chart</h3>
+          <h3 className="text-base font-semibold">Outcome Mix</h3>
           <p className="text-sm text-muted-foreground">
-            Production charting for win, loss, and split-pot rates.
+            Win, lose, and split-pot rates from the current setup.
           </p>
         </div>
         <div className="h-72">
@@ -79,7 +80,7 @@ export function ResultsCharts({
                 {outcomeData.map((entry, index) => (
                   <Cell
                     key={entry.name}
-                    fill={OUTCOME_COLORS[index % OUTCOME_COLORS.length]}
+                    fill={["var(--color-chart-win)", "var(--color-chart-loss)", "var(--color-chart-tie)"][index] ?? OUTCOME_COLORS[index % OUTCOME_COLORS.length]}
                   />
                 ))}
               </Pie>
@@ -90,22 +91,27 @@ export function ResultsCharts({
         </div>
       </div>
 
-      <div className="rounded-[1.75rem] border border-border bg-card/88 p-5">
+      <div className={PANEL_CLASS}>
         <div className="mb-4">
-          <h3 className="text-base font-semibold">Comparison Chart</h3>
+          <h3 className="text-base font-semibold">Comparison Bars</h3>
           <p className="text-sm text-muted-foreground">
-            Compare the latest run against a saved baseline when one is selected.
+            Compare the current run against a saved baseline when one is selected.
           </p>
         </div>
         <div className="h-72">
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={comparisonOutcomeData} barCategoryGap={24}>
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(120,120,120,0.18)" />
+              <CartesianGrid strokeDasharray="3 3" stroke="rgba(120,120,120,0.16)" />
               <XAxis dataKey="name" />
               <YAxis tickFormatter={(value) => formatPercent(Number(value))} width={48} />
               <Tooltip formatter={formatTooltipValue} />
               <Legend />
-              <Bar dataKey="current" name="Current run" fill="#0f766e" radius={[8, 8, 0, 0]} />
+              <Bar
+                dataKey="current"
+                name="Current run"
+                fill="var(--color-chart-win)"
+                radius={[8, 8, 0, 0]}
+              />
               {comparison ? (
                 <Bar
                   dataKey="comparison"
@@ -119,11 +125,11 @@ export function ResultsCharts({
         </div>
       </div>
 
-      <div className="rounded-[1.75rem] border border-border bg-card/88 p-5 xl:col-span-2">
+      <div className={`${PANEL_CLASS} xl:col-span-2`}>
         <div className="mb-4">
           <h3 className="text-base font-semibold">Hand Breakdown</h3>
           <p className="text-sm text-muted-foreground">
-            Full made-hand distribution from the most recent run.
+            Final hero made-hand frequencies from the most recent run.
           </p>
         </div>
         <div className="h-[28rem]">
@@ -134,7 +140,12 @@ export function ResultsCharts({
               <YAxis dataKey="name" type="category" width={110} />
               <Tooltip formatter={formatTooltipValue} />
               <Legend />
-              <Bar dataKey="current" name="Current run" fill="#d97706" radius={[0, 8, 8, 0]} />
+              <Bar
+                dataKey="current"
+                name="Current run"
+                fill="var(--color-chart-tie)"
+                radius={[0, 8, 8, 0]}
+              />
               {comparison ? (
                 <Bar
                   dataKey="comparison"

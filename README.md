@@ -1,26 +1,51 @@
 # Poker Hand Probability Simulator
 
-A Texas Hold'em Monte Carlo simulator built with Next.js, TypeScript, Tailwind CSS, and Recharts.
+A polished Texas Hold'em odds calculator that uses Monte Carlo simulation to estimate win, lose, tie, and made-hand frequencies against mixed fixed and random opponents.
+
+Demo: `TODO: add deployed URL`
+
+Additional screenshots:
+- `TODO: add table-builder screenshot`
+- `TODO: add results-and-charts screenshot`
 
 ## Features
 
-- Interactive hero hole-card and community-board builder
-- Shared 52-card deck with duplicate prevention across hero, board, and fixed seats
-- Fixed or random opponent seat configuration for up to 9 opponents
-- Worker-backed simulations with progress updates and cancel support
-- Win, lose, tie, and made-hand probability reporting
-- Recharts-powered outcome, comparison, and hand-breakdown visualizations
-- Recent-run history with setup reload, saved-run comparison, and CSV/JSON export
-- Local persistence for table state, run history, comparison selection, and theme preference
+- Interactive hero hole-card and board builder with duplicate prevention across the full deck
+- Mixed opponent modeling with random seats and fully fixed known hands
+- Web Worker-backed simulations with progress updates and cancel support
+- Win / lose / tie reporting plus final hand distribution breakdown
+- Saved recent runs with reload, comparison mode, and CSV / JSON export
+- Persistent local UI state for the current table, history, comparison choice, and theme
 
 ## Tech Stack
 
-- Next.js 16
-- React 19
-- TypeScript
-- Tailwind CSS 4
-- Recharts
-- Vitest
+- Frontend framework: Next.js 16 with React 19 App Router
+- Language: TypeScript
+- Styling approach: Tailwind CSS 4 with shared UI primitives and theme tokens in `globals.css`
+- Charts / visualization: Recharts
+- Testing: Vitest
+- Build tooling: Next.js build pipeline, ESLint 9, PostCSS
+- Simulation architecture: Monte Carlo engine in `src/lib/poker.ts` executed in `src/workers/simulation.worker.ts` so long-running trials do not block the UI thread
+
+## How It Works
+
+This project models a Texas Hold'em table state, then repeatedly completes the unknown cards with random legal draws from the remaining deck. Each trial evaluates the hero hand against every opponent hand and records whether the hero wins outright, loses to any opponent, or ties.
+
+At a high level:
+
+- Cards: Hero cards, community cards, and fixed opponent cards all come from one shared 52-card deck, so duplicates are prevented before a simulation starts.
+- Opponents: Each seat can stay random or be locked to known hole cards. Random seats receive fresh sampled cards every trial.
+- Trials: The simulator fills any missing board cards and any missing opponent cards, evaluates every 7-card final hand, and repeats this process for the requested number of trials.
+- Probability estimates: Reported percentages are empirical estimates based on observed outcomes across the trial set, not closed-form exact odds.
+- Hand outcomes: The latest run tracks win, lose, tie, and the hero's final made-hand distribution from high card through royal flush.
+
+## Technical Highlights
+
+- Worker-backed simulation loop keeps the interface responsive during larger runs.
+- Shared deck validation protects against impossible states before a run begins.
+- Mixed fixed/random opponent support lets the simulator handle more realistic table assumptions.
+- Saved-run comparison mode makes scenario analysis easier without rebuilding setups manually.
+- Modular UI split separates layout sections, deck interactions, results panels, and shared simulator helpers.
 
 ## Development
 
@@ -39,20 +64,29 @@ npm run test
 npm run test:watch
 ```
 
-## Project Notes
+## Project Structure
 
-- The simulation worker lives in `src/workers/simulation.worker.ts`
-- Poker evaluation and Monte Carlo logic live in `src/lib/poker.ts`
-- History export helpers live in `src/lib/history.ts`
-- The main simulator interface lives in `src/app/page.tsx`
+- `src/app/page.tsx`: top-level simulator orchestration
+- `src/components/simulator/*`: modular simulator UI sections and shared visual primitives
+- `src/components/results-charts.tsx`: Recharts result visualizations
+- `src/lib/poker.ts`: hand evaluation and Monte Carlo batch logic
+- `src/workers/simulation.worker.ts`: background simulation runner with progress messaging
+- `src/lib/history.ts`: CSV export helpers for saved runs
+
+## Limitations
+
+- Monte Carlo outputs are estimates, so results will vary slightly between runs.
+- Lower trial counts complete faster but produce noisier probability estimates.
+- Higher trial counts improve stability, but they still approximate true odds rather than computing exact combinatorics.
+- The app currently focuses on Texas Hold'em hand-vs-hand simulation, not range-vs-range solving or betting strategy analysis.
 
 ## Probability References
 
-- Pokerology, “Poker Math & Probability: The Complete Guide”
+- Pokerology, "Poker Math & Probability: The Complete Guide"  
   https://www.pokerology.com/poker/math/probability/
-- Statistics LibreTexts, “13.2: Poker”
+- Statistics LibreTexts, "13.2: Poker"  
   https://stats.libretexts.org/Bookshelves/Probability_Theory/Probability_Mathematical_Statistics_and_Stochastic_Processes_%28Siegrist%29/13%3A_Games_of_Chance/13.02%3A_Poker
-- arXiv, “Approximating Poker Probabilities with Deep Learning”
+- arXiv, "Approximating Poker Probabilities with Deep Learning"  
   https://arxiv.org/abs/1808.07220
-- The ANZIAM Journal, “A simulation study of Texas hold 'em poker: what Taylor Swift understands and James Bond doesn't”
+- The ANZIAM Journal, "A simulation study of Texas hold 'em poker: what Taylor Swift understands and James Bond doesn't"  
   https://www.cambridge.org/core/journals/anziam-journal/article/simulation-study-of-texas-hold-em-poker-what-taylor-swift-understands-and-james-bond-doesnt/CB91B0B6D5964E647D383749F1901DD9

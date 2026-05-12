@@ -26,7 +26,7 @@ function CardHeader({ className, ...props }: React.ComponentProps<"div">) {
 function CardTitle({ className, ...props }: React.ComponentProps<"h3">) {
   return (
     <h3
-      className={cn("text-lg font-semibold tracking-tight", className)}
+      className={cn("text-xl font-semibold tracking-tight", className)}
       {...props}
     />
   );
@@ -39,7 +39,7 @@ function CardDescription({
   return (
     <p
       className={cn(
-        "text-sm leading-6 text-stone-700 dark:text-muted-foreground",
+        "text-sm leading-6 text-stone-600 dark:text-muted-foreground",
         className,
       )}
       {...props}
