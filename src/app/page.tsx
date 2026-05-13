@@ -2,6 +2,7 @@
 
 import dynamic from "next/dynamic";
 import { useEffect, useRef, useState } from "react";
+import { ChartColumnIncreasing } from "lucide-react";
 
 import { HandBreakdownList } from "@/components/simulator/hand-breakdown-list";
 import { HeroHeader } from "@/components/simulator/hero-header";
@@ -11,6 +12,7 @@ import { SetupSidebar } from "@/components/simulator/setup-sidebar";
 import { SharedDeck } from "@/components/simulator/shared-deck";
 import { TableBuilder } from "@/components/simulator/table-builder";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { SectionTitle } from "@/components/ui/section-title";
 import { BOARD_STREETS, DECK, SCENARIO_PRESETS } from "@/features/simulator/constants";
 import {
   clampIndex,
@@ -758,34 +760,37 @@ export default function Home() {
           fixedSeatCount={fixedSeatCount}
           formatPercent={formatPercent}
           hiddenOpponentSeats={hiddenOpponentSeats}
-          insetPanelClass={insetPanelClass}
           mutedTextClass={mutedTextClass}
           opponentSummary={opponentSummary}
           panelCardClass={panelCardClass}
           resultSummary={resultSummary}
         />
 
-        <section className="grid gap-6">
-          <Card className={panelCardClass}>
-            <CardHeader>
-              <CardTitle>Charts</CardTitle>
+        <section className="grid items-stretch gap-6 xl:grid-cols-[1.08fr_0.92fr]">
+          <Card className={`${panelCardClass} h-full`}>
+            <CardHeader className="pb-4">
+              <CardTitle>
+                <SectionTitle icon={ChartColumnIncreasing} iconClassName="text-primary">
+                  Charts
+                </SectionTitle>
+              </CardTitle>
               <CardDescription>
                 Compare outcome rates and hand distributions from recent runs.
               </CardDescription>
             </CardHeader>
-            <CardContent>
+            <CardContent className="pt-0 pb-4">
               <ResultsCharts result={resultSummary} comparison={comparisonEntry?.result ?? null} />
             </CardContent>
           </Card>
 
-          <Card className={panelCardClass}>
-            <CardHeader>
+          <Card className={`${panelCardClass} h-full`}>
+            <CardHeader className="pb-4">
               <CardTitle>Hand Type Breakdown</CardTitle>
               <CardDescription>
                 Review the hero hand distribution from the latest run.
               </CardDescription>
             </CardHeader>
-            <CardContent>
+            <CardContent className="pt-0 pb-4">
               <HandBreakdownList handBreakdown={handBreakdown} formatPercent={formatPercent} />
             </CardContent>
           </Card>

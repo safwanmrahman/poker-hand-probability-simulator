@@ -1,8 +1,9 @@
-import { CheckCircle2, GitCompareArrows, History, ShieldCheck, TrendingUp } from "lucide-react";
+import { ShieldCheck, TrendingUp } from "lucide-react";
 
+import { RecentRunsPanel } from "@/components/simulator/recent-runs-panel";
 import { StatCard } from "@/components/simulator/stat-card";
-import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { SectionTitle } from "@/components/ui/section-title";
 import type { RunHistoryEntry } from "@/features/simulator/types";
 import { cn } from "@/lib/utils";
 
@@ -65,18 +66,19 @@ export function ResultsSidebar({
   topHandValue,
 }: ResultsSidebarProps) {
   return (
-    <div className="grid gap-6">
+    <div className="grid content-start gap-5">
       <Card className={panelCardClass}>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <TrendingUp className="size-5 text-primary" />
-            Results
+        <CardHeader className="pb-4">
+          <CardTitle>
+            <SectionTitle icon={TrendingUp} iconClassName="text-primary">
+              Results
+            </SectionTitle>
           </CardTitle>
           <CardDescription>
             View odds, run progress, and saved comparisons.
           </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-4">
+        <CardContent className="space-y-3">
           <div className="grid gap-3">
             {outcomeStats.map((stat) => (
               <StatCard
@@ -127,16 +129,17 @@ export function ResultsSidebar({
       </Card>
 
       <Card className={panelCardClass}>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <ShieldCheck className="size-5 text-primary" />
-            Result Details
+        <CardHeader className="pb-4">
+          <CardTitle>
+            <SectionTitle icon={ShieldCheck} iconClassName="text-primary">
+              Result Details
+            </SectionTitle>
           </CardTitle>
           <CardDescription>
             View hand outcomes, speed, and comparison deltas.
           </CardDescription>
         </CardHeader>
-        <CardContent className="grid gap-3">
+        <CardContent className="grid gap-2.5">
           <div className={cn("rounded-2xl border p-4", mutedPanelClass)}>
             <p className={cn("text-sm", mutedTextClass)}>Best outcome</p>
             <p className="mt-1 text-lg font-semibold">
@@ -175,78 +178,17 @@ export function ResultsSidebar({
         </CardContent>
       </Card>
 
-      <Card className={panelCardClass}>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <History className="size-5 text-[var(--color-chart-tie)]" />
-            Recent Runs
-          </CardTitle>
-          <CardDescription>
-            Reload, compare, and export recent results.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          {runHistory.length === 0 ? (
-            <div
-              className={cn(
-                "rounded-2xl border border-dashed p-4 text-sm",
-                mutedPanelClass,
-                mutedTextClass,
-              )}
-            >
-              No completed runs yet.
-            </div>
-          ) : (
-            runHistory.map((entry) => {
-              const isSelectedForComparison = comparisonRunId === entry.id;
-
-              return (
-                <div
-                  key={entry.id}
-                  className={cn("rounded-[1.6rem] border p-4", mutedPanelClass)}
-                >
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="space-y-1">
-                      <p className="text-sm font-medium">{entry.summary}</p>
-                      <p className={cn("text-xs", mutedTextClass)}>
-                        {new Date(entry.createdAt).toLocaleString()}
-                      </p>
-                    </div>
-                    <div className="inline-flex items-center gap-1 rounded-full bg-primary/8 px-2.5 py-1 text-xs font-medium text-primary">
-                      <CheckCircle2 className="size-3.5" />
-                      {formatPercent(entry.result.win)} win
-                    </div>
-                  </div>
-
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className={outlineButtonClass}
-                      onClick={() => loadHistoryEntry(entry)}
-                    >
-                      Load setup
-                    </Button>
-                    <Button
-                      variant={isSelectedForComparison ? "secondary" : "outline"}
-                      size="sm"
-                      className={isSelectedForComparison ? "" : outlineButtonClass}
-                      onClick={() =>
-                        setComparisonRunId((currentId) =>
-                          currentId === entry.id ? null : entry.id,
-                        )
-                      }
-                    >
-                      <GitCompareArrows className="mr-2 size-4" />
-                      {isSelectedForComparison ? "Comparing" : "Compare"}
-                    </Button>
-                  </div>
-                </div>
-              );
-            })
-          )}
-        </CardContent>
-      </Card>
+      <RecentRunsPanel
+        comparisonRunId={comparisonRunId}
+        formatPercent={formatPercent}
+        loadHistoryEntry={loadHistoryEntry}
+        mutedPanelClass={mutedPanelClass}
+        mutedTextClass={mutedTextClass}
+        outlineButtonClass={outlineButtonClass}
+        panelCardClass={panelCardClass}
+        runHistory={runHistory}
+        setComparisonRunId={setComparisonRunId}
+      />
     </div>
   );
 }

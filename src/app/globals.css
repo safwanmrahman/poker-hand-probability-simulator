@@ -16,6 +16,10 @@
   --chart-win: #1f7a61;
   --chart-loss: #43362c;
   --chart-tie: #c8942c;
+  --field: #fffefb;
+  --field-disabled: #f3eadf;
+  --control-disabled: #d8dfdb;
+  --control-disabled-foreground: #7a746b;
 }
 
 .dark {
@@ -34,6 +38,10 @@
   --chart-win: #44bf98;
   --chart-loss: #d0c2b2;
   --chart-tie: #d9a13a;
+  --field: rgba(8, 14, 28, 0.96);
+  --field-disabled: rgba(17, 29, 39, 0.68);
+  --control-disabled: rgba(64, 176, 143, 0.22);
+  --control-disabled-foreground: rgba(237, 241, 234, 0.55);
 }
 
 @theme inline {
@@ -52,6 +60,10 @@
   --color-chart-win: var(--chart-win);
   --color-chart-loss: var(--chart-loss);
   --color-chart-tie: var(--chart-tie);
+  --color-field: var(--field);
+  --color-field-disabled: var(--field-disabled);
+  --color-control-disabled: var(--control-disabled);
+  --color-control-disabled-foreground: var(--control-disabled-foreground);
   --font-sans: var(--font-body);
   --font-serif: var(--font-display);
   --font-mono: var(--font-mono);

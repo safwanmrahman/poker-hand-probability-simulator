@@ -39,14 +39,6 @@ At a high level:
 - Probability estimates: Reported percentages are empirical estimates based on observed outcomes across the trial set, not closed-form exact odds.
 - Hand outcomes: The latest run tracks win, lose, tie, and the hero's final made-hand distribution from high card through royal flush.
 
-## Technical Highlights
-
-- Worker-backed simulation loop keeps the interface responsive during larger runs.
-- Shared deck validation protects against impossible states before a run begins.
-- Mixed fixed/random opponent support lets the simulator handle more realistic table assumptions.
-- Saved-run comparison mode makes scenario analysis easier without rebuilding setups manually.
-- Modular UI split separates layout sections, deck interactions, results panels, and shared simulator helpers.
-
 ## Development
 
 ```bash
@@ -66,12 +58,59 @@ npm run test:watch
 
 ## Project Structure
 
-- `src/app/page.tsx`: top-level simulator orchestration
-- `src/components/simulator/*`: modular simulator UI sections and shared visual primitives
-- `src/components/results-charts.tsx`: Recharts result visualizations
-- `src/lib/poker.ts`: hand evaluation and Monte Carlo batch logic
-- `src/workers/simulation.worker.ts`: background simulation runner with progress messaging
-- `src/lib/history.ts`: CSV export helpers for saved runs
+```text
+.
+├── public/
+│   ├── file.svg
+│   ├── globe.svg
+│   ├── next.svg
+│   ├── vercel.svg
+│   └── window.svg
+├── src/
+│   ├── app/
+│   │   ├── favicon.ico
+│   │   ├── globals.css
+│   │   ├── layout.tsx
+│   │   └── page.tsx
+│   ├── components/
+│   │   ├── results-charts.tsx
+│   │   ├── simulator/
+│   │   │   ├── hand-breakdown-list.tsx
+│   │   │   ├── hero-header.tsx
+│   │   │   ├── overview-panels.tsx
+│   │   │   ├── playing-card.tsx
+│   │   │   ├── recent-runs-panel.tsx
+│   │   │   ├── results-sidebar.tsx
+│   │   │   ├── setup-sidebar.tsx
+│   │   │   ├── shared-deck.tsx
+│   │   │   ├── stat-card.tsx
+│   │   │   └── table-builder.tsx
+│   │   └── ui/
+│   │       ├── button.tsx
+│   │       ├── card.tsx
+│   │       ├── input.tsx
+│   │       └── section-title.tsx
+│   ├── features/
+│   │   └── simulator/
+│   │       ├── constants.ts
+│   │       ├── helpers.ts
+│   │       ├── storage.ts
+│   │       └── types.ts
+│   ├── lib/
+│   │   ├── history.ts
+│   │   ├── poker.test.ts
+│   │   ├── poker.ts
+│   │   └── utils.ts
+│   └── workers/
+│       └── simulation.worker.ts
+├── components.json
+├── eslint.config.mjs
+├── next.config.ts
+├── package.json
+├── postcss.config.mjs
+├── tsconfig.json
+└── vitest.config.ts
+```
 
 ## Limitations
 

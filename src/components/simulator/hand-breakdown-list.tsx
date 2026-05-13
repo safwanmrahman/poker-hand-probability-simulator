@@ -8,14 +8,14 @@ export function HandBreakdownList({
   formatPercent: (value: number) => string;
 }) {
   return (
-    <div className="space-y-4">
+    <div className="divide-y divide-border/60">
       {handBreakdown.map(([label, value]) => (
-        <div key={label} className="space-y-2">
-          <div className="flex items-center justify-between text-sm">
+        <div key={label} className="space-y-0.5 py-1.5 first:pt-0 last:pb-0">
+          <div className="flex items-center justify-between text-[0.91rem] leading-5">
             <span>{label}</span>
             <span className="font-medium">{formatPercent(value)}</span>
           </div>
-          <div className="h-2.5 rounded-full bg-muted">
+          <div className="h-1.25 rounded-full bg-muted">
             <div
               className={cn(
                 "h-full rounded-full",

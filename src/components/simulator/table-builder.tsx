@@ -58,6 +58,17 @@ export function TableBuilder({
   setOpponentSeatMode,
   visibleOpponentSeats,
 }: TableBuilderProps) {
+  const seatToggleActiveClass = isDarkMode
+    ? "border-primary/35 bg-primary/18 text-foreground shadow-none hover:bg-primary/24"
+    : "border-[#5a4430] bg-secondary text-white shadow-none hover:bg-secondary/95";
+  const seatToggleInactiveClass = outlineButtonClass;
+  const seatCardClass = isDarkMode
+    ? "border-white/10 bg-slate-950/38"
+    : insetPanelClass;
+  const randomSeatSlotButtonClass = isDarkMode
+    ? "cursor-not-allowed text-slate-500"
+    : "cursor-not-allowed text-stone-400";
+
   return (
     <div className="grid gap-6">
       <Card className={panelCardClass}>
@@ -228,7 +239,7 @@ export function TableBuilder({
               {visibleOpponentSeats.map((seat, seatIndex) => (
                 <div
                   key={`opponent-seat-${seatIndex}`}
-                  className={cn("rounded-[1.6rem] border p-4", insetPanelClass)}
+                  className={cn("rounded-[1.6rem] border p-4", seatCardClass)}
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div>
@@ -241,18 +252,26 @@ export function TableBuilder({
                     </div>
                     <div className="flex gap-2">
                       <Button
-                        variant={seat.mode === "random" ? "secondary" : "outline"}
+                        variant="outline"
                         size="sm"
-                        className={seat.mode === "random" ? "" : outlineButtonClass}
+                        className={
+                          seat.mode === "random"
+                            ? seatToggleActiveClass
+                            : seatToggleInactiveClass
+                        }
                         onClick={() => setOpponentSeatMode(seatIndex, "random")}
                         disabled={isRunningSimulation}
                       >
                         Random
                       </Button>
                       <Button
-                        variant={seat.mode === "known" ? "secondary" : "outline"}
+                        variant="outline"
                         size="sm"
-                        className={seat.mode === "known" ? "" : outlineButtonClass}
+                        className={
+                          seat.mode === "known"
+                            ? seatToggleActiveClass
+                            : seatToggleInactiveClass
+                        }
                         onClick={() => setOpponentSeatMode(seatIndex, "known")}
                         disabled={isRunningSimulation}
                       >
@@ -265,6 +284,7 @@ export function TableBuilder({
                     {seat.cards.map((cardId, slotIndex) => {
                       const card = getCardDetails(cardId);
                       const isActive =
+                        seat.mode === "known" &&
                         activeTarget.area === "opponent" &&
                         activeTarget.seat === seatIndex &&
                         activeTarget.slot === slotIndex;
@@ -283,7 +303,7 @@ export function TableBuilder({
                             disabled={seat.mode !== "known" || isRunningSimulation}
                             className={cn(
                               seat.mode !== "known"
-                                ? "cursor-not-allowed opacity-60"
+                                ? randomSeatSlotButtonClass
                                 : "text-left",
                             )}
                           >
