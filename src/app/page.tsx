@@ -13,7 +13,14 @@ import { SharedDeck } from "@/components/simulator/shared-deck";
 import { TableBuilder } from "@/components/simulator/table-builder";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { SectionTitle } from "@/components/ui/section-title";
-import { BOARD_STREETS, DECK, SCENARIO_PRESETS } from "@/features/simulator/constants";
+import {
+  BOARD_STREETS,
+  DECK,
+  LARGE_SIMULATION_WARNING_THRESHOLD,
+  MAX_SIMULATIONS,
+  MIN_SIMULATIONS,
+  SCENARIO_PRESETS,
+} from "@/features/simulator/constants";
 import {
   clampIndex,
   createDefaultOpponentSeats,
@@ -179,8 +186,8 @@ export default function Home() {
   const parsedSimulationCount = Number.parseInt(simulationInput, 10);
   const isSimulationCountValid =
     Number.isFinite(parsedSimulationCount) &&
-    parsedSimulationCount >= 1000 &&
-    parsedSimulationCount <= 500000;
+    parsedSimulationCount >= MIN_SIMULATIONS &&
+    parsedSimulationCount <= MAX_SIMULATIONS;
   const isOpponentCountValid = opponentCount >= 1 && opponentCount <= 9;
   const hasBoardGap = selectedBoardCards.some(
     (card, index) => card === null && selectedBoardCards.slice(index + 1).some(Boolean),
@@ -299,6 +306,10 @@ export default function Home() {
       const rightValue = Number.parseFloat(right.value);
       return rightValue - leftValue;
     })[0];
+  const simulationWarning =
+    isSimulationCountValid && parsedSimulationCount > LARGE_SIMULATION_WARNING_THRESHOLD
+      ? `Large runs can keep the device busy for longer. ${parsedSimulationCount.toLocaleString()} trials should still stay responsive because the simulator runs in a Web Worker.`
+      : null;
   const statusMessage =
     holeCardsSelected < 2
       ? "Choose both hero hole cards to unlock simulations."
@@ -311,7 +322,7 @@ export default function Home() {
             : !isOpponentCountValid
               ? "Choose between 1 and 9 opponents."
               : !isSimulationCountValid
-                ? "Enter a simulation count between 1,000 and 500,000."
+                ? `Enter a simulation count between ${MIN_SIMULATIONS.toLocaleString()} and ${MAX_SIMULATIONS.toLocaleString()}.`
                 : simulationError
                   ? simulationError
                   : "Selections look valid. You can run the simulation now.";
@@ -686,9 +697,10 @@ export default function Home() {
             simulationProgress={simulationProgress}
             simulationResultElapsedMs={simulationResult?.elapsedMs ?? null}
             simulationResultPresent={Boolean(simulationResult)}
-            softTextClass={softTextClass}
+            simulationWarning={simulationWarning}
             statusMessage={statusMessage}
             strongTextClass={strongTextClass}
+            softTextClass={softTextClass}
           />
 
           <div className="grid gap-6">

@@ -19,6 +19,9 @@ export const DECK = RANKS.flatMap((rank) =>
 );
 
 export const BOARD_STREETS = ["Flop 1", "Flop 2", "Flop 3", "Turn", "River"] as const;
+export const MIN_SIMULATIONS = 1000;
+export const MAX_SIMULATIONS = 250000;
+export const LARGE_SIMULATION_WARNING_THRESHOLD = 100000;
 export const SIMULATION_PRESETS = [5000, 25000, 100000] as const;
 export const OPPONENT_PRESETS = [1, 3, 6, 9] as const;
 export const STREET_PRESETS = [

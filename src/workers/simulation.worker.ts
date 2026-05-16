@@ -7,6 +7,12 @@ import {
 
 const SIMULATION_BATCH_SIZE = 2500;
 
+function yieldToWorkerQueue() {
+  return new Promise<void>((resolve) => {
+    setTimeout(resolve, 0);
+  });
+}
+
 type SimulationWorkerRequest = {
   type: "run";
   heroHoleCards: string[];
@@ -47,7 +53,8 @@ self.onmessage = (event: MessageEvent<SimulationWorkerRequest>) => {
     return;
   }
 
-  try {
+  void (async () => {
+    try {
     const {
       heroHoleCards,
       boardCards,
@@ -82,6 +89,8 @@ self.onmessage = (event: MessageEvent<SimulationWorkerRequest>) => {
         totalSimulations: simulations,
         progress: Math.round((completedSimulations / simulations) * 100),
       });
+
+      await yieldToWorkerQueue();
     }
 
     postMessageToClient({
@@ -93,11 +102,12 @@ self.onmessage = (event: MessageEvent<SimulationWorkerRequest>) => {
         elapsedMs: Math.round(performance.now() - startedAt),
       }),
     });
-  } catch (error) {
-    postMessageToClient({
-      type: "error",
-      message:
-        error instanceof Error ? error.message : "Simulation worker failed.",
-    });
-  }
+    } catch (error) {
+      postMessageToClient({
+        type: "error",
+        message:
+          error instanceof Error ? error.message : "Simulation worker failed.",
+      });
+    }
+  })();
 };

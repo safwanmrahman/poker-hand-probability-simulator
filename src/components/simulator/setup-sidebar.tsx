@@ -3,7 +3,14 @@ import { Download, Play, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { SCENARIO_PRESETS, OPPONENT_PRESETS, SIMULATION_PRESETS } from "@/features/simulator/constants";
+import {
+  LARGE_SIMULATION_WARNING_THRESHOLD,
+  MAX_SIMULATIONS,
+  MIN_SIMULATIONS,
+  OPPONENT_PRESETS,
+  SCENARIO_PRESETS,
+  SIMULATION_PRESETS,
+} from "@/features/simulator/constants";
 import { cn } from "@/lib/utils";
 
 type SetupSidebarProps = {
@@ -18,12 +25,13 @@ type SetupSidebarProps = {
   simulationResultElapsedMs: number | null;
   simulationResultPresent: boolean;
   simulationProgress: number;
-  softTextClass: string;
+  simulationWarning: string | null;
   statusMessage: string;
   strongTextClass: string;
   mutedPanelClass: string;
   insetPanelClass: string;
   mutedTextClass: string;
+  softTextClass: string;
   fixedSeatCount: number;
   remainingDeckCount: number;
   holeCardsSelected: number;
@@ -73,9 +81,10 @@ export function SetupSidebar({
   simulationProgress,
   simulationResultElapsedMs,
   simulationResultPresent,
-  softTextClass,
+  simulationWarning,
   statusMessage,
   strongTextClass,
+  softTextClass,
 }: SetupSidebarProps) {
   return (
     <div className="grid gap-6">
@@ -97,6 +106,11 @@ export function SetupSidebar({
             {simulationError ? (
               <p className="mt-2 text-sm leading-6 text-red-700 dark:text-rose-300">
                 {simulationError}
+              </p>
+            ) : null}
+            {simulationWarning ? (
+              <p className="mt-2 text-sm leading-6 text-amber-700 dark:text-amber-300">
+                {simulationWarning}
               </p>
             ) : null}
           </div>
@@ -152,11 +166,19 @@ export function SetupSidebar({
             <Input
               id="simulations"
               type="number"
+              min={String(MIN_SIMULATIONS)}
+              max={String(MAX_SIMULATIONS)}
+              step="1000"
+              inputMode="numeric"
               value={simulationInput}
               onChange={(event) => onSetSimulationInput(event.target.value)}
               placeholder="25000"
               disabled={isRunningSimulation}
             />
+            <p className={cn("text-xs leading-5", mutedTextClass)}>
+              Run between {MIN_SIMULATIONS.toLocaleString()} and {MAX_SIMULATIONS.toLocaleString()} trials.
+              Runs above {LARGE_SIMULATION_WARNING_THRESHOLD.toLocaleString()} may take longer on lower-power devices.
+            </p>
             <div className="flex flex-wrap gap-2">
               {SIMULATION_PRESETS.map((preset) => (
                 <Button
@@ -182,6 +204,7 @@ export function SetupSidebar({
               type="number"
               min="1"
               max="9"
+              inputMode="numeric"
               value={String(opponentCount)}
               onChange={(event) => onSetOpponentCount(Number.parseInt(event.target.value || "1", 10) || 1)}
               placeholder="1"

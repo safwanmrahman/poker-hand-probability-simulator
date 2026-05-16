@@ -1,21 +1,16 @@
 # Poker Hand Probability Simulator
 
-A polished Texas Hold'em odds calculator that uses Monte Carlo simulation to estimate win, lose, tie, and made-hand frequencies against mixed fixed and random opponents.
-
-Demo: `TODO: add deployed URL`
-
-Additional screenshots:
-- `TODO: add table-builder screenshot`
-- `TODO: add results-and-charts screenshot`
+A production-ready Texas Hold'em odds calculator built with Next.js. It runs entirely in the browser, uses a Web Worker for Monte Carlo simulations, and estimates win, lose, tie, and made-hand frequencies against mixed fixed and random opponents.
 
 ## Features
 
 - Interactive hero hole-card and board builder with duplicate prevention across the full deck
 - Mixed opponent modeling with random seats and fully fixed known hands
-- Web Worker-backed simulations with progress updates and cancel support
+- Web Worker-backed simulations with progress updates, cancellation support, and heavy-run safeguards
 - Win / lose / tie reporting plus final hand distribution breakdown
 - Saved recent runs with reload, comparison mode, and CSV / JSON export
 - Persistent local UI state for the current table, history, comparison choice, and theme
+- Stable first-paint theme hydration for light and dark mode in production
 
 ## Tech Stack
 
@@ -26,6 +21,7 @@ Additional screenshots:
 - Testing: Vitest
 - Build tooling: Next.js build pipeline, ESLint 9, PostCSS
 - Simulation architecture: Monte Carlo engine in `src/lib/poker.ts` executed in `src/workers/simulation.worker.ts` so long-running trials do not block the UI thread
+- Deployment target: Static-compatible Next.js frontend with no required backend services and no required environment variables
 
 ## How It Works
 
@@ -38,6 +34,7 @@ At a high level:
 - Trials: The simulator fills any missing board cards and any missing opponent cards, evaluates every 7-card final hand, and repeats this process for the requested number of trials.
 - Probability estimates: Reported percentages are empirical estimates based on observed outcomes across the trial set, not closed-form exact odds.
 - Hand outcomes: The latest run tracks win, lose, tie, and the hero's final made-hand distribution from high card through royal flush.
+- Performance: Simulations run in a dedicated worker so the main UI stays responsive during larger runs.
 
 ## Development
 
@@ -45,6 +42,8 @@ At a high level:
 npm install
 npm run dev
 ```
+
+Open `http://localhost:3000`.
 
 ## Available Scripts
 
@@ -56,16 +55,45 @@ npm run test
 npm run test:watch
 ```
 
+## Production Notes
+
+- The app is fully client-side at runtime. There is no API route, database, or backend service in this repository.
+- No `.env` file is required for local development or deployment.
+- Simulation counts are capped in the UI to keep production usage reasonable on typical devices.
+- Recent runs and theme preference are stored in `localStorage` in the browser.
+
+## Deployment
+
+### Vercel
+
+1. Import the repository into Vercel.
+2. Keep the default Next.js framework preset.
+3. Use these build settings if you need to enter them manually:
+
+```text
+Build command: npm run build
+Install command: npm install
+Output setting: Next.js default
+```
+
+4. Deploy. No environment variables are required.
+
+### Netlify
+
+1. Create a new site from the repository.
+2. Set the build command to `npm run build`.
+3. Set the publish directory to `.next`.
+4. Make sure Netlify detects this as a Next.js site so the Next.js runtime/plugin is enabled.
+5. Deploy. No environment variables are required.
+
+If Netlify asks for framework details explicitly, choose `Next.js`.
+
 ## Project Structure
 
 ```text
 .
 ├── public/
-│   ├── file.svg
-│   ├── globe.svg
-│   ├── next.svg
-│   ├── vercel.svg
-│   └── window.svg
+│   └── ...
 ├── src/
 │   ├── app/
 │   │   ├── favicon.ico
