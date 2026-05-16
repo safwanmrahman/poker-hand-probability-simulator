@@ -25,6 +25,11 @@ export const metadata: Metadata = {
   title: "Poker Hand Probability Simulator",
   description:
     "Texas Hold'em Monte Carlo simulator with shared-deck controls, worker-backed runs, and probability visualizations.",
+  icons: {
+    icon: [{ url: "/icon", type: "image/png", sizes: "64x64" }],
+    shortcut: [{ url: "/icon", type: "image/png", sizes: "64x64" }],
+    apple: [{ url: "/apple-icon", type: "image/png", sizes: "180x180" }],
+  },
 };
 
 const themeInitScript = `

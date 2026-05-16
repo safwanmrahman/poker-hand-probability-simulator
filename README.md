@@ -2,6 +2,10 @@
 
 A production-ready Texas Hold'em odds calculator built with Next.js. It runs entirely in the browser, uses a Web Worker for Monte Carlo simulations, and estimates win, lose, tie, and made-hand frequencies against mixed fixed and random opponents.
 
+## Live Demo
+
+https://poker-hand-probability-simulator.vercel.app/
+
 ## Features
 
 - Interactive hero hole-card and board builder with duplicate prevention across the full deck
@@ -96,8 +100,9 @@ If Netlify asks for framework details explicitly, choose `Next.js`.
 │   └── ...
 ├── src/
 │   ├── app/
-│   │   ├── favicon.ico
+│   │   ├── apple-icon.tsx
 │   │   ├── globals.css
+│   │   ├── icon.tsx
 │   │   ├── layout.tsx
 │   │   └── page.tsx
 │   ├── components/
